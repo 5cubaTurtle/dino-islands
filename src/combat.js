@@ -155,14 +155,16 @@ export function damage(game, target, amount, from, knock = 8) {
   return true;
 }
 
+const BODY_TIME = 20; // seconds a knocked-out wild dinosaur stays lying there
+
 export function knockOut(game, e) {
   e.ko = true;
-  e.koDur = e.koT = e.isPlayer ? 2.8 : 1.8;
+  e.koDur = e.koT = e.isPlayer ? 2.8 : BODY_TIME;
   e.hover = false;
   e.vel.set(0, 0, 0);
   e.pitch = 0;
   e.specialAnim = 0;
-  game.effects.stars(e, e.koDur);
+  game.effects.stars(e, Math.min(e.koDur, 3));
   game.sfx.ko();
   if (e.isPlayer) game.onPlayerKO();
   else game.onNpcKO(e);
