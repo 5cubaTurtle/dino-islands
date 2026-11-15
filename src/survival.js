@@ -1,6 +1,6 @@
 // Health / hunger / thirst, plus the things you can eat and drink.
 import * as THREE from 'three';
-import { waterNear } from './world.js';
+import { waterNear, inLava } from './world.js';
 import { groundAt } from './entity.js';
 import { FOOD_HINT } from './species.js';
 import { knockOut } from './combat.js';
@@ -48,6 +48,19 @@ function feed(game, amount) {
 export function updateSurvival(game, dt) {
   const p = game.player, sv = game.survival, w = game.world, t = game.time;
   if (p.ko) { game.hud.setPrompt(''); return; }
+
+  // Lava burns through a full health bar in about 2 seconds.
+  if (inLava(p.pos)) {
+    if (!sv.inLava) { sv.inLava = true; game.hud.toast('Lava! Get out!', 1.5); }
+    p.hp -= p.maxHp * 0.5 * dt;
+    if (p.hp <= 0) {
+      p.hp = 0;
+      game.starved = 'lava';
+      knockOut(game, p);
+      game.hud.setPrompt('');
+      return;
+    }
+  } else sv.inLava = false;
 
   sv.hunger = Math.max(0, sv.hunger - 0.33 * dt);
   sv.thirst = Math.max(0, sv.thirst - 0.42 * dt);

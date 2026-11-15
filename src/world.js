@@ -91,6 +91,11 @@ export function zoneAt(x, z) {
   }
   return 'grass';
 }
+/** True when a dinosaur's feet are in the volcano's lava pool (radius 15, surface 2.5 m above the crater floor). */
+export function inLava(pos) {
+  const v = ZONES.volcano;
+  return Math.hypot(pos.x - v.x, pos.z - v.z) < 15 && pos.y < getHeight(v.x, v.z) + 2.5;
+}
 /** Lowest ground height around a point: used to detect a shoreline to drink from. */
 export function waterNear(x, z, r) {
   let m = getHeight(x, z);

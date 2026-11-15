@@ -100,7 +100,7 @@ game.onPlayerKO = () => {
   game.state = 'nap';
   game.napT = 2.8;
   game.sfx.nap();
-  $('napTitle').textContent = game.starved === 'hunger' ? 'You starved! 🍖' : game.starved === 'thirst' ? 'You got too thirsty! 💧' : 'Take a nap! 💤';
+  $('napTitle').textContent = game.starved === 'lava' ? 'You got burned! 🔥' : game.starved === 'hunger' ? 'You starved! 🍖' : game.starved === 'thirst' ? 'You got too thirsty! 💧' : 'Take a nap! 💤';
   game.starved = false;
   show('nap', true);
 };
