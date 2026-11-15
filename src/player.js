@@ -1,6 +1,7 @@
 // Player control: movement, flying, attacks and each species' special move.
 import { damage } from './combat.js';
 import { angleLerp, groundAt } from './entity.js';
+import { bridgeAt } from './world.js';
 
 const alive = (n) => !n.ko && !n.gone;
 
@@ -40,6 +41,7 @@ function hornTree(game, p, reach, skip) {
   game.effects.dust(at, 1.4);
   if (tr.state === 'falling') {
     at.y += 4;
+    if (tr.bridge) game.hud.toast('The tree made a bridge! Only light dinosaurs can walk on it.', 4);
     game.effects.word(at, 'CRACK!', '#ffd23f', 3);
     game.sfx.stomp();
     game.shake = Math.max(game.shake, 0.35);
@@ -160,6 +162,13 @@ export function updatePlayer(game, dt) {
   }
 
   p.physics(dt);
+
+  // a heavy dinosaur at a log bridge just wades through: say why
+  p.bridgeHintT = (p.bridgeHintT || 0) - dt;
+  if (!p.light && p.bridgeHintT <= 0 && Math.abs(bridgeAt(p.pos.x, p.pos.z) - p.pos.y) < 4) {
+    p.bridgeHintT = 8;
+    game.hud.toast(`${s.name} is too heavy for the log bridge.`, 2.5);
+  }
 
   const busy = p.charge || p.pounce || p.dive;
 

@@ -135,6 +135,26 @@ export function waterKind(x, z, r) {
 }
 
 const TREE_HITS = 4; // horn hits it takes to break a tree
+
+// ---- log bridges -----------------------------------------------------------
+// A tree that falls across water stays where it lands as a bridge. Each is a
+// straight walkway: starts at (x, z), runs `len` metres along (fx, fz), its top
+// is at height y there and rises `rise` metres per metre. Only light dinosaurs
+// are held up by it (see entity.js).
+const BRIDGE_HALF_WIDTH = 1.1;
+const bridges = [];
+/** Height of the top of a log bridge under (x, z), or -Infinity if there is none. */
+export function bridgeAt(x, z) {
+  let top = -Infinity;
+  for (const b of bridges) {
+    const dx = x - b.x, dz = z - b.z;
+    const s = dx * b.fx + dz * b.fz;
+    if (s < -0.5 || s > b.len) continue;
+    if (Math.abs(dx * b.fz - dz * b.fx) > BRIDGE_HALF_WIDTH) continue;
+    top = Math.max(top, b.y + s * b.rise);
+  }
+  return top;
+}
 const treeM = new THREE.Matrix4(), treeQ = new THREE.Quaternion(), treeS = new THREE.Vector3(), treeAxis = new THREE.Vector3();
 
 // ---- solid obstacles (trees, rocks, nests) ---------------------------------
@@ -322,6 +342,18 @@ export class World {
     if (best.hits >= TREE_HITS) {
       best.state = 'falling'; best.t = 0;
       best.collider.top = -Infinity; // no longer solid
+      // Work out how it comes to rest: lying on the ground (or the water) along
+      // its length, and whether any of it is over water, which makes it a bridge.
+      const len = 9.5 * best.scale.y;
+      let tilt = -0.55;
+      best.bridge = false;
+      for (let s = 2; s <= len; s += 1) {
+        const h = getHeight(best.x + best.fx * s, best.z + best.fz * s);
+        if (h < 0) best.bridge = true;
+        tilt = Math.max(tilt, Math.asin(Math.max(-0.55, Math.min(0.55, (Math.max(h, 0) - best.pos.y) / s))));
+      }
+      best.len = len;
+      best.leanEnd = Math.PI / 2 - tilt;
     } else best.leanTo = best.hits * 0.09;
     return best;
   }
@@ -335,11 +367,15 @@ export class World {
         tr.lean = Math.min(tr.leanTo, tr.lean + dt * 0.8);
       } else if (tr.state === 'falling') {
         tr.t += dt;
-        if (tr.lean >= 1.5) { // lying on the ground for a while, then it fades away
-          if (tr.t > 8) { tr.state = 'fading'; tr.t = 0; }
+        if (tr.lean >= tr.leanEnd) {
+          if (tr.bridge) { // across water: it stays as a bridge
+            const sin = Math.sin(tr.leanEnd), cos = Math.cos(tr.leanEnd);
+            bridges.push({ x: tr.x, z: tr.z, fx: tr.fx, fz: tr.fz, len: tr.len * sin, y: tr.pos.y + 0.4 * tr.scale.x, rise: cos / sin });
+            tr.state = 'bridge';
+          } else if (tr.t > 8) { tr.state = 'fading'; tr.t = 0; } // on dry land it fades away after a while
           continue;
         }
-        tr.lean = Math.min(1.5, tr.lean + (0.6 + tr.t * 5) * dt); // speeds up as it goes over
+        tr.lean = Math.min(tr.leanEnd, tr.lean + (0.6 + tr.t * 5) * dt); // speeds up as it goes over
       } else if (tr.state === 'fading') {
         tr.t += dt;
         s = Math.max(0, 1 - tr.t / 0.6);

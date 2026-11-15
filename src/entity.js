@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildDino } from './dinoModels.js';
-import { getHeight, collide, slopeAt } from './world.js';
+import { getHeight, collide, slopeAt, bridgeAt } from './world.js';
 
 const shadowGeo = new THREE.CircleGeometry(1, 16);
 shadowGeo.rotateX(-Math.PI / 2);
@@ -16,6 +16,7 @@ export const groundAt = (x, z) => Math.max(getHeight(x, z), SWIM_Y);
 const SHORE_Y = 0.5;      // ground this low is a beach or bank: always walkable
 const SLIDE_SPEED = 7;    // how fast a dinosaur slips down ground too steep for it
 const grad = { x: 0, z: 0 };
+const LIGHT = new Set(['raptor', 'ptera']); // light enough to walk on a log bridge
 
 export function angleLerp(a, b, t) {
   let d = (b - a) % (Math.PI * 2);
@@ -32,6 +33,8 @@ export class Dino {
     this.scale = opts.scale || 1;
     this.isPlayer = !!opts.isPlayer;
     this.radius = this.spec.radius * this.scale;
+    this.light = LIGHT.has(key) && this.scale <= 1.2;
+    this.onBridge = false;
     this.climb = this.spec.climb ?? 0.8; // steepest slope it can walk up (rise per metre)
     this.maxHp = this.hp = opts.hp || this.spec.hp;
 
@@ -83,7 +86,7 @@ export class Dino {
     if (!this.hover) this.vy -= 30 * dt;
     p.y += this.vy * dt;
     collide(p, this.radius * 0.7); // trees, rocks and nests are solid
-    if (!this.hover) {
+    if (!this.hover && !this.onBridge) {
       // Too steep to walk up: stop, or slip sideways along the hill instead.
       const g0 = groundAt(ox, oz);
       if (this.tooSteepAt(p.x, p.z, g0)) {
@@ -92,7 +95,13 @@ export class Dino {
         else { p.x = ox; p.z = oz; }
       }
     }
-    const g = groundAt(p.x, p.z);
+    let g = groundAt(p.x, p.z);
+    this.onBridge = false;
+    if (this.light) {
+      // A log bridge holds a light dinosaur that is on it or stepping up onto it.
+      const deck = bridgeAt(p.x, p.z);
+      if (deck > g && p.y >= deck - 1.2) { g = deck; this.onBridge = true; }
+    }
     if (p.y <= g || (wasGround && this.vy <= 0 && p.y - g < 0.7)) {
       p.y = g;
       if (this.vy < 0) this.vy = 0;
@@ -107,7 +116,7 @@ export class Dino {
 
     // Standing on ground that is too steep: slide back down it.
     this.steep = false;
-    if (this.onGround && !this.hover && g > SHORE_Y) {
+    if (this.onGround && !this.hover && !this.onBridge && g > SHORE_Y) {
       const m = slopeAt(p.x, p.z, grad);
       if (m > this.climb) {
         this.steep = true;
