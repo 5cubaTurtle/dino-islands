@@ -91,10 +91,14 @@ export function zoneAt(x, z) {
   }
   return 'grass';
 }
-/** True when a dinosaur's feet are in the volcano's lava pool (radius 15, surface 2.5 m above the crater floor). */
+// The lava surface sits this far above the lowest point of the crater. The
+// crater floor rises about 0.8 m per metre, so 8 gives a pool ~10 m in radius.
+const LAVA_DEPTH = 8;
+const lavaLevel = () => getHeight(ZONES.volcano.x, ZONES.volcano.z) + LAVA_DEPTH;
+/** True when a dinosaur's feet are below the surface of the volcano's lava pool. */
 export function inLava(pos) {
   const v = ZONES.volcano;
-  return Math.hypot(pos.x - v.x, pos.z - v.z) < 15 && pos.y < getHeight(v.x, v.z) + 2.5;
+  return Math.hypot(pos.x - v.x, pos.z - v.z) < 15 && pos.y < lavaLevel();
 }
 /** Lowest ground height around a point: used to detect a shoreline to drink from. */
 export function waterNear(x, z, r) {
@@ -206,7 +210,7 @@ export class World {
     const v = ZONES.volcano;
     this.lava = new THREE.Mesh(new THREE.CircleGeometry(15, 20), new THREE.MeshBasicMaterial({ color: 0xff7a1a }));
     this.lava.rotation.x = -Math.PI / 2;
-    this.lava.position.set(v.x, getHeight(v.x, v.z) + 2.5, v.z);
+    this.lava.position.set(v.x, lavaLevel(), v.z);
     scene.add(this.lava);
 
     this.buildTrees(rnd);
@@ -386,6 +390,6 @@ export class World {
     }
     for (const c of this.clouds) { c.position.x += dt * 2; if (c.position.x > 600) c.position.x = -600; }
     const pulse = 0.85 + Math.sin(t * 2) * 0.15;
-    this.lava.material.color.setRGB(1 * pulse, 0.45 * pulse, 0.1);
+    this.lava.material.color.setRGB(1 * pulse, 0.2 * pulse, 0.02);
   }
 }
