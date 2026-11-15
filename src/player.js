@@ -32,6 +32,24 @@ function melee(game, p, range, dmg, knock) {
   return any;
 }
 
+/** Triceratops horns knock a tree: it leans a bit more each time and breaks on the last hit. */
+function hornTree(game, p, reach, skip) {
+  const tr = game.world.hitTree(p.pos.x, p.pos.z, Math.sin(p.yaw), Math.cos(p.yaw), reach, skip);
+  if (!tr) return null;
+  const at = p.pos.clone(); at.x = tr.x; at.z = tr.z;
+  game.effects.dust(at, 1.4);
+  if (tr.state === 'falling') {
+    at.y += 4;
+    game.effects.word(at, 'CRACK!', '#ffd23f', 3);
+    game.sfx.stomp();
+    game.shake = Math.max(game.shake, 0.35);
+  } else {
+    game.sfx.bonk();
+    game.shake = Math.max(game.shake, 0.12);
+  }
+  return tr;
+}
+
 function touching(p, n, pad) {
   return Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z) < p.radius + n.radius + pad
     && Math.abs(n.pos.y - p.pos.y) < 3 + n.radius;
@@ -85,6 +103,9 @@ export function updatePlayer(game, dt) {
       c.hit.add(n);
       if (damage(game, n, 45, p.pos, 24)) game.shake = 0.3;
     }
+    // charging into a tree counts as one horn hit on it
+    const tr = hornTree(game, p, p.radius + 1.2, c.hit);
+    if (tr) c.hit.add(tr);
     if (c.t <= 0) endSpecial(p);
   } else if (p.pounce) {
     const c = p.pounce;
@@ -196,5 +217,6 @@ export function updatePlayer(game, dt) {
     p.startAttackAnim(Math.min(0.3, s.atkCd));
     if (p.key === 'trex') game.sfx.chomp(); else game.sfx.swipe();
     melee(game, p, s.range, s.dmg, p.key === 'trex' ? 12 : p.key === 'trike' ? 10 : 6);
+    if (p.key === 'trike') hornTree(game, p, s.range);
   }
 }

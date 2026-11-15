@@ -134,6 +134,9 @@ export function waterKind(x, z, r) {
   return kind;
 }
 
+const TREE_HITS = 4; // horn hits it takes to break a tree
+const treeM = new THREE.Matrix4(), treeQ = new THREE.Quaternion(), treeS = new THREE.Vector3(), treeAxis = new THREE.Vector3();
+
 // ---- solid obstacles (trees, rocks, nests) ---------------------------------
 // Each is an upright cylinder: { x, z, r, top }. Stored in a coarse grid so a
 // dinosaur only tests the few obstacles around it.
@@ -144,7 +147,9 @@ function addCollider(x, z, r, top) {
   const k = ckey(Math.floor(x / CCELL), Math.floor(z / CCELL));
   let list = colliders.get(k);
   if (!list) colliders.set(k, list = []);
-  list.push({ x, z, r, top });
+  const c = { x, z, r, top };
+  list.push(c);
+  return c;
 }
 /** Push a position (feet at pos.y) out of any obstacle it overlaps. Returns true on contact. */
 export function collide(pos, radius) {
@@ -256,6 +261,7 @@ export class World {
   }
 
   buildTrees(rnd) {
+    this.trees = [];
     const spots = [];
     const ok = (s) => s && !['volcano', 'lake'].includes(zoneAt(s.x, s.z))
       && Math.hypot(s.x - 150, s.z - 100) > 24
@@ -280,12 +286,73 @@ export class World {
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rnd() * 6.28);
       sc.set(k, k * (0.85 + rnd() * 0.4), k);
       m.compose(p, q, sc);
-      addCollider(s.x, s.z, 0.6 * k, p.y + 10.4 * sc.y);
+      const collider = addCollider(s.x, s.z, 0.6 * k, p.y + 10.4 * sc.y);
+      this.trees.push({
+        i, x: s.x, z: s.z, r: 0.6 * k, collider, pos: p.clone(), quat: q.clone(), scale: sc.clone(),
+        hits: 0, lean: 0, leanTo: 0, fx: 0, fz: 1, state: 'up', t: 0,
+      });
       trunks.setMatrixAt(i, m); leaves.setMatrixAt(i, m);
       col.setHSL(0.28 + rnd() * 0.1, 0.55, 0.28 + rnd() * 0.12);
       leaves.setColorAt(i, col);
     });
     this.scene.add(trunks, leaves);
+    this.treeMeshes = [trunks, leaves];
+  }
+
+  /**
+   * Horns hit the nearest standing tree in front of (x, z) facing (fx, fz).
+   * Each hit makes it lean; the TREE_HITS-th breaks it. Returns the tree
+   * (with tree.state === 'falling' if this hit broke it) or null.
+   */
+  hitTree(x, z, fx, fz, reach, skip) {
+    let best = null, bd = Infinity;
+    for (const tr of this.trees) {
+      if (tr.state !== 'up' || (skip && skip.has(tr))) continue;
+      const dx = tr.x - x, dz = tr.z - z;
+      if (Math.abs(dx) > reach + tr.r || Math.abs(dz) > reach + tr.r) continue;
+      const d = Math.hypot(dx, dz);
+      if (d > reach + tr.r || d >= bd) continue;
+      if (d > 0.5 && (dx * fx + dz * fz) / d < 0.3) continue;
+      best = tr; bd = d;
+    }
+    if (!best) return null;
+    const dx = best.x - x, dz = best.z - z, d = Math.hypot(dx, dz) || 1;
+    best.fx = dx / d; best.fz = dz / d; // it leans, then falls, away from the hit
+    best.hits++;
+    if (best.hits >= TREE_HITS) {
+      best.state = 'falling'; best.t = 0;
+      best.collider.top = -Infinity; // no longer solid
+    } else best.leanTo = best.hits * 0.09;
+    return best;
+  }
+
+  updateTrees(dt) {
+    let dirty = false;
+    for (const tr of this.trees) {
+      let s = 1;
+      if (tr.state === 'up') {
+        if (tr.lean === tr.leanTo) continue;
+        tr.lean = Math.min(tr.leanTo, tr.lean + dt * 0.8);
+      } else if (tr.state === 'falling') {
+        tr.t += dt;
+        if (tr.lean >= 1.5) { // lying on the ground for a while, then it fades away
+          if (tr.t > 8) { tr.state = 'fading'; tr.t = 0; }
+          continue;
+        }
+        tr.lean = Math.min(1.5, tr.lean + (0.6 + tr.t * 5) * dt); // speeds up as it goes over
+      } else if (tr.state === 'fading') {
+        tr.t += dt;
+        s = Math.max(0, 1 - tr.t / 0.6);
+        if (s === 0) tr.state = 'gone';
+      } else continue;
+      treeAxis.set(tr.fz, 0, -tr.fx);
+      treeQ.setFromAxisAngle(treeAxis, tr.lean).multiply(tr.quat);
+      treeS.copy(tr.scale).multiplyScalar(s);
+      treeM.compose(tr.pos, treeQ, treeS);
+      for (const mesh of this.treeMeshes) mesh.setMatrixAt(tr.i, treeM);
+      dirty = true;
+    }
+    if (dirty) for (const mesh of this.treeMeshes) mesh.instanceMatrix.needsUpdate = true;
   }
 
   buildRocks(rnd) {
@@ -402,6 +469,7 @@ export class World {
   }
 
   update(dt, t) {
+    this.updateTrees(dt);
     for (const f of this.fish) {
       if (!f.ready) { f.regrow -= dt; if (f.regrow <= 0) { f.ready = true; f.group.visible = true; } continue; }
       const s = Math.sin(t * 1.4 + f.phase);
