@@ -109,6 +109,22 @@ export function waterNear(x, z, r) {
   }
   return m < 0.15;
 }
+/**
+ * What kind of water is within reach: 'salt' (the sea), 'fresh' (lake or river) or null.
+ * The sea only starts beyond 225 m from the middle of the island; the river stays
+ * fresh all the way to its mouth. Fresh water wins when both are in reach.
+ */
+export function waterKind(x, z, r) {
+  let kind = null;
+  for (let i = 0; i < 7; i++) {
+    const a = i * Math.PI / 3, k = i < 6 ? r : 0;
+    const sx = x + Math.cos(a) * k, sz = z + Math.sin(a) * k;
+    if (getHeight(sx, sz) >= 0.15) continue;
+    if (Math.hypot(sx, sz) <= 225 || riverDist(sx, sz) < 12) return 'fresh';
+    kind = 'salt';
+  }
+  return kind;
+}
 
 // ---- solid obstacles (trees, rocks, nests) ---------------------------------
 // Each is an upright cylinder: { x, z, r, top }. Stored in a coarse grid so a

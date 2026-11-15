@@ -1,6 +1,6 @@
 // Health / hunger / thirst, plus the things you can eat and drink.
 import * as THREE from 'three';
-import { waterNear, inLava } from './world.js';
+import { waterKind, inLava } from './world.js';
 import { groundAt } from './entity.js';
 import { FOOD_HINT } from './species.js';
 import { knockOut } from './combat.js';
@@ -114,16 +114,24 @@ export function updateSurvival(game, dt) {
     }
   }
 
-  const onShore = p.onGround && waterNear(p.pos.x, p.pos.z, p.radius + 2);
+  const water = p.onGround ? waterKind(p.pos.x, p.pos.z, p.radius + 2) : null;
   sv.busy -= dt;
   let prompt = '';
   if (food && sv.hunger < 97) prompt = eatsMeat ? 'Press E to eat' : 'Press E to munch berries';
-  else if (onShore && sv.thirst < 97) prompt = 'Press E to drink';
+  else if (water === 'salt') prompt = 'Press E to drink sea water';
+  else if (water && sv.thirst < 97) prompt = 'Press E to drink';
   game.hud.setPrompt(prompt);
 
   if (prompt && game.input.hit('KeyE') && sv.busy <= 0) {
     sv.busy = 0.4;
-    if (prompt === 'Press E to drink') {
+    if (prompt === 'Press E to drink sea water') {
+      // The sea is salty: drinking it makes you thirstier.
+      sv.thirst = Math.max(0, sv.thirst - 20);
+      game.sfx.drink();
+      const head = p.pos.clone(); head.y += p.spec.headH;
+      game.effects.word(head, 'YUCK!', '#c8e06a', 2.2);
+      game.hud.toast('Sea water is salty! Drink from the lake or river.', 3);
+    } else if (prompt === 'Press E to drink') {
       sv.thirst = Math.min(100, sv.thirst + 45);
       sv.warnedThirst = false;
       game.sfx.drink();
