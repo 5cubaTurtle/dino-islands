@@ -52,11 +52,11 @@ export function updateSurvival(game, dt) {
   sv.hunger = Math.max(0, sv.hunger - 0.33 * dt);
   sv.thirst = Math.max(0, sv.thirst - 0.42 * dt);
   if (sv.hunger <= 0 || sv.thirst <= 0) {
-    // Starving is deadly; thirst alone only wears you down to 15% health.
-    if (sv.hunger <= 0 || p.hp > p.maxHp * 0.15) p.hp -= p.maxHp * 0.01 * dt;
+    // Running out of food or water is deadly.
+    p.hp -= p.maxHp * 0.01 * dt;
     if (p.hp <= 0) {
       p.hp = 0;
-      game.starved = true;
+      game.starved = sv.hunger <= 0 ? 'hunger' : 'thirst';
       knockOut(game, p);
       game.hud.setPrompt('');
       return;
