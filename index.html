@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dino Island</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="meters">
+      <div class="meter"><i>❤️</i><div class="track"><div id="hp" class="fill hp"></div></div></div>
+      <div class="meter"><i>🍖</i><div class="track"><div id="hunger" class="fill hunger"></div></div></div>
+      <div class="meter"><i>💧</i><div class="track"><div id="thirst" class="fill thirst"></div></div></div>
+      <div id="crowns"></div>
+    </div>
+    <div id="boss"><div id="bossName"></div><div class="track"><div id="bossFill" class="fill boss"></div></div></div>
+    <canvas id="minimap" width="160" height="160"></canvas>
+    <div id="toast"></div>
+    <div id="prompt"></div>
+    <div id="moves">
+      <div class="move"><b>Click</b> <span id="attackName"></span></div>
+      <div class="move"><b>Right-click</b> <span id="specialName"></span>
+        <div class="track small"><div id="special" class="fill special"></div></div></div>
+    </div>
+    <div id="hint"></div>
+  </div>
+
+  <div id="menu" class="overlay menu">
+    <h1>Dino Island</h1>
+    <p class="sub">Pick your dinosaur</p>
+    <div id="cards"></div>
+    <button id="play" class="big">Play</button>
+    <p class="keys">WASD move · Mouse look · Click attack · Right-click special · E eat / drink</p>
+    <button id="reset" class="link">Start over (clear crowns)</button>
+  </div>
+
+  <div id="pause" class="overlay dim hidden"><h2>Paused</h2><p>Click to keep playing</p></div>
+  <div id="nap" class="overlay dim hidden"><h2>Take a nap! 💤</h2><p>You will wake up at your nest…</p></div>
+  <div id="win" class="overlay dim hidden">
+    <h2>👑👑👑 Ruler of Dino Island!</h2>
+    <p>You beat all three bosses.</p>
+    <button id="keepGoing" class="big">Keep roaming</button>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

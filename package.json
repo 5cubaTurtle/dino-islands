@@ -1,0 +1,12 @@
+{
+  "name": "dino-island",
+  "version": "1.0.0",
+  "description": "Free-roam 3D dinosaur action game (Three.js, runs in the browser)",
+  "private": true,
+  "scripts": {
+    "start": "./run.sh"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  }
+}
