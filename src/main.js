@@ -100,6 +100,8 @@ game.onPlayerKO = () => {
   game.state = 'nap';
   game.napT = 2.8;
   game.sfx.nap();
+  $('napTitle').textContent = game.starved ? 'You starved! 🍖' : 'Take a nap! 💤';
+  game.starved = false;
   show('nap', true);
 };
 function wakeUp() {

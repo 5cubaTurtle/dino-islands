@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { waterNear } from './world.js';
 import { groundAt } from './entity.js';
 import { FOOD_HINT } from './species.js';
+import { knockOut } from './combat.js';
 
 const boneM = new THREE.MeshLambertMaterial({ color: 0xfff6dc, flatShading: true });
 const meatM = new THREE.MeshLambertMaterial({ color: 0xb5651d, flatShading: true });
@@ -51,7 +52,15 @@ export function updateSurvival(game, dt) {
   sv.hunger = Math.max(0, sv.hunger - 0.33 * dt);
   sv.thirst = Math.max(0, sv.thirst - 0.42 * dt);
   if (sv.hunger <= 0 || sv.thirst <= 0) {
-    if (p.hp > p.maxHp * 0.15) p.hp -= p.maxHp * 0.01 * dt; // never knocks you out by itself
+    // Starving is deadly; thirst alone only wears you down to 15% health.
+    if (sv.hunger <= 0 || p.hp > p.maxHp * 0.15) p.hp -= p.maxHp * 0.01 * dt;
+    if (p.hp <= 0) {
+      p.hp = 0;
+      game.starved = true;
+      knockOut(game, p);
+      game.hud.setPrompt('');
+      return;
+    }
   } else if (t - p.lastHit > 4 && p.hp < p.maxHp) {
     p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.0025 * dt);
   }
