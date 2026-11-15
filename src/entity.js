@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildDino } from './dinoModels.js';
-import { getHeight, collide } from './world.js';
+import { getHeight, collide, slopeAt } from './world.js';
 
 const shadowGeo = new THREE.CircleGeometry(1, 16);
 shadowGeo.rotateX(-Math.PI / 2);
@@ -13,6 +13,9 @@ const shadowMat = new THREE.MeshBasicMaterial({
 
 export const SWIM_Y = -1.2;
 export const groundAt = (x, z) => Math.max(getHeight(x, z), SWIM_Y);
+const SHORE_Y = 0.5;      // ground this low is a beach or bank: always walkable
+const SLIDE_SPEED = 7;    // how fast a dinosaur slips down ground too steep for it
+const grad = { x: 0, z: 0 };
 
 export function angleLerp(a, b, t) {
   let d = (b - a) % (Math.PI * 2);
@@ -29,6 +32,7 @@ export class Dino {
     this.scale = opts.scale || 1;
     this.isPlayer = !!opts.isPlayer;
     this.radius = this.spec.radius * this.scale;
+    this.climb = this.spec.climb ?? 0.8; // steepest slope it can walk up (rise per metre)
     this.maxHp = this.hp = opts.hp || this.spec.hp;
 
     this.model = buildDino(key, opts.palette);
@@ -45,6 +49,9 @@ export class Dino {
     this.vy = 0;
     this.yaw = 0; this.pitch = 0;
     this.onGround = true;
+    this.steep = false;               // standing on ground too steep for this species
+    this.fallTop = 0;                 // highest point of the current fall
+    this.fallDrop = 0;                // height of the last landing; read and cleared by the game
     this.hover = false;               // true = no gravity (flying)
     this.ko = false; this.koT = 0;
     this.invuln = 0; this.lastHit = -99;
@@ -57,24 +64,57 @@ export class Dino {
     this.pos.set(x, y ?? groundAt(x, z), z);
     this.prev.copy(this.pos);
     this.vy = 0; this.kb.set(0, 0, 0);
+    this.fallTop = this.pos.y; this.fallDrop = 0; this.steep = false;
+  }
+
+  /** True if stepping from ground height g0 to (x, z) means walking up a slope that is too steep. */
+  tooSteepAt(x, z, g0) {
+    const g = groundAt(x, z);
+    return g > g0 && g > SHORE_Y && this.pos.y - g < 0.3 && slopeAt(x, z) > this.climb;
   }
 
   physics(dt) {
     const p = this.pos;
     const wasGround = this.onGround;
+    const ox = p.x, oz = p.z;
     p.x += (this.vel.x + this.kb.x) * dt;
     p.z += (this.vel.z + this.kb.z) * dt;
     this.kb.multiplyScalar(Math.exp(-5 * dt));
     if (!this.hover) this.vy -= 30 * dt;
     p.y += this.vy * dt;
     collide(p, this.radius * 0.7); // trees, rocks and nests are solid
+    if (!this.hover) {
+      // Too steep to walk up: stop, or slip sideways along the hill instead.
+      const g0 = groundAt(ox, oz);
+      if (this.tooSteepAt(p.x, p.z, g0)) {
+        if (!this.tooSteepAt(p.x, oz, g0)) p.z = oz;
+        else if (!this.tooSteepAt(ox, p.z, g0)) p.x = ox;
+        else { p.x = ox; p.z = oz; }
+      }
+    }
     const g = groundAt(p.x, p.z);
     if (p.y <= g || (wasGround && this.vy <= 0 && p.y - g < 0.7)) {
       p.y = g;
       if (this.vy < 0) this.vy = 0;
+      // landing on land after a fall (water is a soft landing, and flyers land gently)
+      if (!wasGround && !this.hover && g > SWIM_Y) this.fallDrop = Math.max(0, this.fallTop - g);
       this.onGround = true;
     } else {
       this.onGround = false;
+    }
+    if (this.onGround || this.hover) this.fallTop = p.y;
+    else this.fallTop = Math.max(this.fallTop, p.y);
+
+    // Standing on ground that is too steep: slide back down it.
+    this.steep = false;
+    if (this.onGround && !this.hover && g > SHORE_Y) {
+      const m = slopeAt(p.x, p.z, grad);
+      if (m > this.climb) {
+        this.steep = true;
+        p.x -= grad.x / m * SLIDE_SPEED * dt;
+        p.z -= grad.z / m * SLIDE_SPEED * dt;
+        p.y = Math.min(p.y, groundAt(p.x, p.z));
+      }
     }
     // keep everyone on (or near) the island
     const d = Math.hypot(p.x, p.z);

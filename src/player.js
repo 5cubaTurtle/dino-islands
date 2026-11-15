@@ -133,7 +133,7 @@ export function updatePlayer(game, dt) {
         if (p.pos.y > 95 && p.vy > 0) p.vy = 0;
         p.pitch = -p.vy * 0.03;
       }
-    } else if (inp.hit('Space') && p.onGround) {
+    } else if (inp.hit('Space') && p.onGround && !p.steep) {
       p.vy = s.jump; p.onGround = false;
     }
   }
@@ -158,7 +158,7 @@ export function updatePlayer(game, dt) {
       p.specialCd = s.specialCd; p.specialAnim = 1;
       p.charge = { t: 1.1, dx, dz, hit: new Set() };
       game.sfx.whoosh();
-    } else if (s.special === 'pounce' && p.onGround) {
+    } else if (s.special === 'pounce' && p.onGround && !p.steep) {
       p.specialCd = s.specialCd; p.specialAnim = 1;
       const t = nearest(game, p, 20, aimYaw, 0.3);
       let ux = dx, uz = dz, sp = 22;

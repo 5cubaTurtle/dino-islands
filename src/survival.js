@@ -11,6 +11,9 @@ const boneG = new THREE.CylinderGeometry(0.12, 0.12, 1.0, 6);
 const knobG = new THREE.SphereGeometry(0.2, 6, 5);
 const meatG = new THREE.SphereGeometry(0.55, 8, 6);
 
+const FALL_SAFE = 3;     // metres you can drop without getting hurt
+const FALL_HURT = 0.04;  // share of full health lost per metre beyond that (28 m is a knock-out)
+
 export function newSurvival() {
   return { hunger: 100, thirst: 100, warnedHunger: false, warnedThirst: false, busy: 0 };
 }
@@ -47,7 +50,27 @@ function feed(game, amount) {
 
 export function updateSurvival(game, dt) {
   const p = game.player, sv = game.survival, w = game.world, t = game.time;
+  const drop = p.fallDrop;
+  p.fallDrop = 0;
   if (p.ko) { game.hud.setPrompt(''); return; }
+
+  // Falling hurts: nothing for the first few metres, then more the further you drop.
+  if (drop > FALL_SAFE) {
+    p.hp -= p.maxHp * (drop - FALL_SAFE) * FALL_HURT;
+    p.lastHit = t;
+    game.sfx.ouch();
+    game.shake = Math.max(game.shake, 0.4);
+    game.effects.dust(p.pos, 1 + p.radius);
+    const head = p.pos.clone(); head.y += p.spec.headH;
+    game.effects.word(head, 'OUCH!', '#ffb36b', 2.2);
+    if (p.hp <= 0) {
+      p.hp = 0;
+      game.starved = 'fall';
+      knockOut(game, p);
+      game.hud.setPrompt('');
+      return;
+    }
+  }
 
   // Lava burns through a full health bar in about 2 seconds.
   if (inLava(p.pos)) {

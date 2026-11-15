@@ -100,6 +100,14 @@ export function inLava(pos) {
   const v = ZONES.volcano;
   return Math.hypot(pos.x - v.x, pos.z - v.z) < 15 && pos.y < lavaLevel();
 }
+/** How steep the ground is at a point: metres of rise per metre (1 = 45 degrees). */
+export function slopeAt(x, z, out) {
+  const e = 0.6;
+  const gx = (getHeight(x + e, z) - getHeight(x - e, z)) / (2 * e);
+  const gz = (getHeight(x, z + e) - getHeight(x, z - e)) / (2 * e);
+  if (out) { out.x = gx; out.z = gz; }
+  return Math.hypot(gx, gz);
+}
 /** Lowest ground height around a point: used to detect a shoreline to drink from. */
 export function waterNear(x, z, r) {
   let m = getHeight(x, z);
