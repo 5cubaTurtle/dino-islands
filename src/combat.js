@@ -123,6 +123,13 @@ export class Effects {
  */
 export function damage(game, target, amount, from, knock = 8) {
   if (target.ko || target.gone || target.invuln > 0) return false;
+  if (target.armorT > 0) { // Ankylosaurus armour: the hit just bounces off
+    const head = target.pos.clone(); head.y += target.spec.headH * target.scale;
+    game.effects.word(head, 'CLANG!', '#d9d9d9', 2.2);
+    game.sfx.bonk();
+    target.invuln = 0.4;
+    return false;
+  }
   target.hp -= amount;
   target.lastHit = game.time;
   let dx = target.pos.x - from.x, dz = target.pos.z - from.z;

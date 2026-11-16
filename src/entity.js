@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { SPECIES } from './species.js';
 import { buildDino } from './dinoModels.js';
-import { getHeight, collide, slopeAt, bridgeAt } from './world.js';
+import { getHeight, collide, slopeAt, bridgeAt, clampToWorld } from './world.js';
 
 const shadowGeo = new THREE.CircleGeometry(1, 16);
 shadowGeo.rotateX(-Math.PI / 2);
@@ -17,6 +17,8 @@ const SHORE_Y = 0.5;      // ground this low is a beach or bank: always walkable
 const SLIDE_SPEED = 7;    // how fast a dinosaur slips down ground too steep for it
 const grad = { x: 0, z: 0 };
 const LIGHT = new Set(['raptor', 'ptera']); // light enough to walk on a log bridge
+const SWIM_DEPTH = -0.8; // a swimmer (Mosasaurus) needs water deeper than this
+const deepEnough = (x, z) => getHeight(x, z) < SWIM_DEPTH;
 
 export function angleLerp(a, b, t) {
   let d = (b - a) % (Math.PI * 2);
@@ -34,6 +36,7 @@ export class Dino {
     this.isPlayer = !!opts.isPlayer;
     this.radius = this.spec.radius * this.scale;
     this.light = LIGHT.has(key) && this.scale <= 1.2;
+    this.swimmer = !!this.spec.swim; // lives in the water and cannot go on land
     this.onBridge = false;
     this.climb = this.spec.climb ?? 0.8; // steepest slope it can walk up (rise per metre)
     this.maxHp = this.hp = opts.hp || this.spec.hp;
@@ -44,6 +47,7 @@ export class Dino {
     this.group.add(this.model.group);
     this.shadow = new THREE.Mesh(shadowGeo, shadowMat);
     scene.add(this.group, this.shadow);
+    this.shadow.visible = !this.swimmer; // no shadow on the water
 
     this.pos = new THREE.Vector3();
     this.prev = new THREE.Vector3();
@@ -86,7 +90,14 @@ export class Dino {
     if (!this.hover) this.vy -= 30 * dt;
     p.y += this.vy * dt;
     collide(p, this.radius * 0.7); // trees, rocks and nests are solid
-    if (!this.hover && !this.onBridge) {
+    if (this.swimmer) {
+      // The water ends at the shore: a swimmer can't climb out, but can always head for deeper water.
+      if (!deepEnough(p.x, p.z) && getHeight(p.x, p.z) > getHeight(ox, oz)) {
+        if (deepEnough(p.x, oz)) p.z = oz;
+        else if (deepEnough(ox, p.z)) p.x = ox;
+        else { p.x = ox; p.z = oz; }
+      }
+    } else if (!this.hover && !this.onBridge) {
       // Too steep to walk up: stop, or slip sideways along the hill instead.
       const g0 = groundAt(ox, oz);
       if (this.tooSteepAt(p.x, p.z, g0)) {
@@ -116,7 +127,7 @@ export class Dino {
 
     // Standing on ground that is too steep: slide back down it.
     this.steep = false;
-    if (this.onGround && !this.hover && !this.onBridge && g > SHORE_Y) {
+    if (this.onGround && !this.hover && !this.onBridge && !this.swimmer && g > SHORE_Y) {
       const m = slopeAt(p.x, p.z, grad);
       if (m > this.climb) {
         this.steep = true;
@@ -125,9 +136,7 @@ export class Dino {
         p.y = Math.min(p.y, groundAt(p.x, p.z));
       }
     }
-    // keep everyone on (or near) the island
-    const d = Math.hypot(p.x, p.z);
-    if (d > 335) { p.x *= 335 / d; p.z *= 335 / d; }
+    clampToWorld(p); // keep everyone on the map
   }
 
   /** Push model + shadow to match the simulation and advance animations. */
@@ -151,7 +160,7 @@ export class Dino {
     mg.position.y = this.ko ? this.radius * 0.35 * Math.min(1, roll) : 0;
     mg.scale.setScalar(s);
 
-    const flying = !this.onGround && (this.hover || this.key === 'ptera');
+    const flying = !this.onGround && (this.hover || !!this.spec.fly);
     this.model.animate({
       t, phase: this.phase, move: this.ko ? 0 : this.moveSpeed / 3,
       attack: this.attackAnim, special: this.specialAnim, flying,
@@ -166,7 +175,7 @@ export class Dino {
 
   startAttackAnim(dur = 0.3) { this.attackAnim = 1; this.attackDur = dur; }
 
-  setVisible(v) { this.group.visible = v; this.shadow.visible = v; }
+  setVisible(v) { this.group.visible = v; this.shadow.visible = v && !this.swimmer; }
 
   dispose() { this.scene.remove(this.group, this.shadow); }
 }

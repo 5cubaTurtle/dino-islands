@@ -1,6 +1,6 @@
 // Dino Island: boot, game states and the main loop.
 import * as THREE from 'three';
-import { World, NESTS } from './world.js';
+import { World, NESTS, SEA_SPAWNS, ISLANDS, islandAt } from './world.js';
 import { SPECIES, SPECIES_ORDER } from './species.js';
 import { Dino } from './entity.js';
 import { Input } from './input.js';
@@ -52,8 +52,10 @@ function setSpecies(key) {
   if (game.player) game.player.dispose();
   const p = new Dino(scene, key, { isPlayer: true });
   resetPlayerState(p);
-  p.place(NESTS[0].x + 5, NESTS[0].z);
+  const home = p.spec.swim ? SEA_SPAWNS[0] : NESTS[p.spec.home ?? 0];
+  p.place(home.x + (p.spec.swim ? 0 : 5), home.z);
   p.yaw = Math.PI;
+  game.island = islandAt(p.pos.x, p.pos.z);
   game.player = p;
   game.save.species = key;
   game.cam.snap = true;
@@ -61,9 +63,11 @@ function setSpecies(key) {
   document.querySelectorAll('.card').forEach((c) => c.classList.toggle('sel', c.dataset.key === key));
 }
 
-function nearestNest(pos) {
-  let best = NESTS[0], bd = Infinity;
-  for (const n of NESTS) { const d = Math.hypot(n.x - pos.x, n.z - pos.z); if (d < bd) { bd = d; best = n; } }
+/** Where to wake up: the nearest nest (or, for a Mosasaurus, the nearest open sea). */
+function nearestNest(pos, swimmer) {
+  const list = swimmer ? SEA_SPAWNS : NESTS;
+  let best = list[0], bd = Infinity;
+  for (const n of list) { const d = Math.hypot(n.x - pos.x, n.z - pos.z); if (d < bd) { bd = d; best = n; } }
   return best;
 }
 
@@ -105,10 +109,10 @@ game.onPlayerKO = () => {
   show('nap', true);
 };
 function wakeUp() {
-  const p = game.player, nest = nearestNest(p.pos);
+  const p = game.player, nest = nearestNest(p.pos, p.spec.swim);
   resetPlayerState(p);
   p.ko = false; p.hp = p.maxHp; p.invuln = 3;
-  p.place(nest.x + 5, nest.z);
+  p.place(nest.x + (p.spec.swim ? 0 : 5), nest.z);
   game.survival = newSurvival();
   game.waves.length = 0;
   for (const n of game.npcs) { n.angryT = 0; n.windup = 0; }
@@ -188,7 +192,11 @@ function update(dt) {
   else { p.vel.set(0, 0, 0); p.physics(dt); }
   updateNpcs(game, dt);
   p.sync(dt, game.time);
-  if (game.state === 'playing') { updateWaves(game, dt); updateSurvival(game, dt); }
+  if (game.state === 'playing') {
+    updateWaves(game, dt); updateSurvival(game, dt);
+    const isl = islandAt(p.pos.x, p.pos.z); // say hello when you reach a different island
+    if (isl && isl !== game.island) { game.island = isl; game.hud.toast(`Welcome to ${ISLANDS[isl].name}!`, 3); }
+  }
   if (game.state === 'nap') {
     p.koT = Math.max(0.5, p.koT - dt);
     game.napT -= dt;

@@ -1,14 +1,17 @@
 // Player control: movement, flying, attacks and each species' special move.
 import { damage } from './combat.js';
 import { angleLerp, groundAt } from './entity.js';
-import { bridgeAt } from './world.js';
+import { bridgeAt, getHeight } from './world.js';
 
 const alive = (n) => !n.ko && !n.gone;
+/** Same kind of animal don't fight each other (bosses and the Queen's pack still do). */
+export const sameKind = (a, b) => a.key === b.key && !b.boss && !b.summon;
+const foe = (p, n) => alive(n) && !sameKind(p, n);
 
 function nearest(game, p, maxD, yaw = null, minDot = -1) {
   let best = null, bd = maxD;
   for (const n of game.npcs) {
-    if (!alive(n)) continue;
+    if (!foe(p, n)) continue;
     const dx = n.pos.x - p.pos.x, dz = n.pos.z - p.pos.z;
     const d = Math.hypot(dx, dz) - n.radius;
     if (d > bd || Math.abs(n.pos.y - p.pos.y) > 5 + n.radius) continue;
@@ -18,16 +21,16 @@ function nearest(game, p, maxD, yaw = null, minDot = -1) {
   return best;
 }
 
-function melee(game, p, range, dmg, knock) {
+function melee(game, p, range, dmg, knock, allAround = false) {
   const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
   let any = false;
   for (const n of game.npcs) {
-    if (!alive(n)) continue;
+    if (!foe(p, n)) continue;
     const dx = n.pos.x - p.pos.x, dz = n.pos.z - p.pos.z;
     const d = Math.hypot(dx, dz);
     if (d > range + n.radius + p.radius * 0.5) continue;
     if (Math.abs(n.pos.y - p.pos.y) > 3 + n.radius + p.radius) continue;
-    if (d > p.radius && (dx * fx + dz * fz) / d < 0.3) continue;
+    if (!allAround && d > p.radius && (dx * fx + dz * fz) / d < 0.3) continue;
     if (damage(game, n, dmg, p.pos, knock)) any = true;
   }
   return any;
@@ -66,7 +69,18 @@ function endSpecial(p) {
 export function resetPlayerState(p) {
   endSpecial(p);
   p.attackCd = 0; p.specialCd = 0; p.roarT = 0;
+  p.armorT = 0; p.quakeT = 0; p.gustT = 0;
   p.hover = false;
+}
+
+/** Hit every foe within `r` metres (on the ground nearby, or anywhere in 3D if `air`). */
+function blast(game, p, r, dmg, knock, air = false) {
+  for (const n of game.npcs) {
+    if (!foe(p, n)) continue;
+    const d = air ? n.pos.distanceTo(p.pos) : Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z);
+    if (d > r + n.radius || (!air && Math.abs(n.pos.y - p.pos.y) > 4 + n.radius)) continue;
+    if (damage(game, n, dmg, p.pos, knock) && n.air) n.air.mode = 'climb';
+  }
 }
 
 export function updatePlayer(game, dt) {
@@ -86,9 +100,26 @@ export function updatePlayer(game, dt) {
   const canFly = !!s.fly;
   let speed = shift ? s.sprint : s.speed;
   if (canFly && !p.onGround) speed = s.fly;
-  if (p.pos.y < -0.7) speed *= 0.6; // swimming
+  if (p.pos.y < -0.7 && !s.swim) speed *= 0.6; // swimming (a Mosasaurus is at home in the water)
 
   if (p.roarT > 0) { p.roarT -= dt; p.specialAnim = Math.max(0, p.roarT / 0.9); }
+  if (p.armorT > 0) { // Ankylosaurus: hunkered down in its armour
+    p.armorT -= dt; p.specialAnim = p.armorT > 0 ? 1 : 0;
+    speed *= 0.35;
+  }
+  if (p.gustT > 0) { p.gustT -= dt; p.specialAnim = Math.max(0, p.gustT / 0.6); }
+  if (p.quakeT > 0) { // Brachiosaurus rears up ... and comes down hard
+    p.quakeT -= dt; p.specialAnim = Math.max(0.001, p.quakeT / 0.8);
+    speed = 0;
+    if (p.quakeT <= 0) {
+      p.specialAnim = 0;
+      blast(game, p, 16, 35, 16);
+      fx.ring(p.pos, 18, 0.7, 0xffe0a0);
+      fx.dust(p.pos, 3.5);
+      game.sfx.stomp(); game.sfx.stomp();
+      game.shake = 0.8;
+    }
+  }
 
   if (p.charge) {
     const c = p.charge;
@@ -98,16 +129,21 @@ export function updatePlayer(game, dt) {
       c.dx = Math.sin(y); c.dz = Math.cos(y);
     }
     p.yaw = Math.atan2(c.dx, c.dz);
-    p.vel.set(c.dx * 28, 0, c.dz * 28);
+    p.vel.set(c.dx * c.speed, 0, c.dz * c.speed);
     if (Math.random() < dt * 16) fx.dust(p.pos, 1.1);
     for (const n of game.npcs) {
-      if (!alive(n) || c.hit.has(n) || !touching(p, n, 0.8)) continue;
+      if (!foe(p, n) || c.hit.has(n) || !touching(p, n, 0.8)) continue;
       c.hit.add(n);
-      if (damage(game, n, 45, p.pos, 24)) game.shake = 0.3;
+      if (damage(game, n, c.dmg, p.pos, c.knock)) {
+        game.shake = 0.3;
+        if (c.stun && !n.ko) { n.stun = c.stun; fx.stars(n, c.stun); }
+      }
     }
     // charging into a tree counts as one horn hit on it
-    const tr = hornTree(game, p, p.radius + 1.2, c.hit);
-    if (tr) c.hit.add(tr);
+    if (c.horns) {
+      const tr = hornTree(game, p, p.radius + 1.2, c.hit);
+      if (tr) c.hit.add(tr);
+    }
     if (c.t <= 0) endSpecial(p);
   } else if (p.pounce) {
     const c = p.pounce;
@@ -115,8 +151,8 @@ export function updatePlayer(game, dt) {
     p.vel.set(c.dx * c.sp, 0, c.dz * c.sp);
     let done = c.t > 0.15 && p.onGround;
     for (const n of game.npcs) {
-      if (!alive(n) || !touching(p, n, 0.9)) continue;
-      damage(game, n, 35, p.pos, 10);
+      if (!foe(p, n) || !touching(p, n, 0.9)) continue;
+      damage(game, n, s.pounceDmg ?? 35, p.pos, 10);
       done = true;
       break;
     }
@@ -126,10 +162,10 @@ export function updatePlayer(game, dt) {
     p.hover = true; p.vy = -26; p.pitch = 0.9;
     p.vel.set(c.dx * 20, 0, c.dz * 20);
     let boom = p.onGround;
-    for (const n of game.npcs) if (alive(n) && touching(p, n, 1.2)) { boom = true; break; }
+    for (const n of game.npcs) if (foe(p, n) && touching(p, n, 1.2)) { boom = true; break; }
     if (boom) {
       for (const n of game.npcs) {
-        if (alive(n) && touching(p, n, 5)) damage(game, n, 40, p.pos, 14);
+        if (foe(p, n) && touching(p, n, 5)) damage(game, n, 40, p.pos, 14);
       }
       fx.ring(p.pos, 7, 0.4, 0xffffff);
       fx.dust(p.pos, 2);
@@ -156,7 +192,7 @@ export function updatePlayer(game, dt) {
         if (p.pos.y > 95 && p.vy > 0) p.vy = 0;
         p.pitch = -p.vy * 0.03;
       }
-    } else if (inp.hit('Space') && p.onGround && !p.steep) {
+    } else if (s.jump && inp.hit('Space') && p.onGround && !p.steep) {
       p.vy = s.jump; p.onGround = false;
     }
   }
@@ -170,7 +206,7 @@ export function updatePlayer(game, dt) {
     game.hud.toast(`${s.name} is too heavy for the log bridge.`, 2.5);
   }
 
-  const busy = p.charge || p.pounce || p.dive;
+  const busy = p.charge || p.pounce || p.dive || p.quakeT > 0;
 
   // ---- special move ----
   if (inp.hit('Special') && p.specialCd <= 0 && !busy) {
@@ -180,15 +216,34 @@ export function updatePlayer(game, dt) {
       game.sfx.roar(); game.shake = 0.4;
       fx.ring(p.pos, 36, 0.8, 0xfff3b0);
       for (const n of game.npcs) {
-        if (!alive(n) || n.pos.distanceTo(p.pos) > 36) continue;
+        if (!foe(p, n) || n.pos.distanceTo(p.pos) > 36) continue;
         if (n.boss || n.key === 'trex') { n.stun = 1.6; fx.stars(n, 1.6); }
         else { n.fleeT = 6; n.angryT = 0; if (n.air) n.air.mode = 'climb'; }
       }
     } else if (s.special === 'charge') {
       p.specialCd = s.specialCd; p.specialAnim = 1;
-      p.charge = { t: 1.1, dx, dz, hit: new Set() };
+      p.charge = { t: 1.1, dx, dz, hit: new Set(), speed: 28, dmg: 45, knock: 24, horns: true };
       game.sfx.whoosh();
-    } else if (s.special === 'pounce' && p.onGround && !p.steep) {
+    } else if (s.special === 'ram') { // Pachycephalosaurus: short dash that leaves foes seeing stars
+      p.specialCd = s.specialCd; p.specialAnim = 1;
+      p.charge = { t: 0.6, dx, dz, hit: new Set(), speed: 30, dmg: 30, knock: 18, stun: 2 };
+      game.sfx.whoosh();
+    } else if (s.special === 'armor') {
+      p.specialCd = s.specialCd; p.armorT = 4;
+      fx.ring(p.pos, 5, 0.4, 0xd8c8a0);
+      game.sfx.bonk();
+      game.hud.toast('Armour up! Nothing can hurt you for 4 seconds.', 2);
+    } else if (s.special === 'quake') {
+      p.specialCd = s.specialCd; p.quakeT = 0.8;
+      game.sfx.roar(1.2);
+    } else if (s.special === 'gust') { // Quetzalcoatlus: one huge wing beat
+      p.specialCd = s.specialCd; p.gustT = 0.6;
+      blast(game, p, 13, 18, 22, true);
+      fx.ring(p.pos, 13, 0.5, 0xffffff);
+      fx.dust(p.pos, 2.5);
+      game.sfx.whoosh(); game.sfx.whoosh();
+      game.shake = 0.3;
+    } else if (s.special === 'pounce' && p.onGround && !p.steep && (!s.swim || getHeight(p.pos.x, p.pos.z) < -0.8)) {
       p.specialCd = s.specialCd; p.specialAnim = 1;
       const t = nearest(game, p, 20, aimYaw, 0.3);
       let ux = dx, uz = dz, sp = 22;
@@ -224,8 +279,10 @@ export function updatePlayer(game, dt) {
     else if (!moving) p.yaw = cy;
     p.attackCd = s.atkCd;
     p.startAttackAnim(Math.min(0.3, s.atkCd));
-    if (p.key === 'trex') game.sfx.chomp(); else game.sfx.swipe();
-    melee(game, p, s.range, s.dmg, p.key === 'trex' ? 12 : p.key === 'trike' ? 10 : 6);
+    if (p.key === 'trex' || p.key === 'mosa') game.sfx.chomp();
+    else if (p.key === 'brachio') game.sfx.stomp();
+    else game.sfx.swipe();
+    melee(game, p, s.range, s.dmg, s.knock ?? (p.key === 'trex' ? 12 : p.key === 'trike' ? 10 : 6), !!s.allAround);
     if (p.key === 'trike') hornTree(game, p, s.range);
   }
 }

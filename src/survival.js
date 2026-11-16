@@ -86,7 +86,9 @@ export function updateSurvival(game, dt) {
   } else sv.inLava = false;
 
   sv.hunger = Math.max(0, sv.hunger - 0.33 * dt);
-  sv.thirst = Math.max(0, sv.thirst - 0.42 * dt);
+  // a Mosasaurus lives in the sea and never gets thirsty
+  if (p.spec.swim) sv.thirst = 100;
+  else sv.thirst = Math.max(0, sv.thirst - 0.42 * dt);
   if (sv.hunger <= 0 || sv.thirst <= 0) {
     // Running out of food or water is deadly.
     p.hp -= p.maxHp * 0.01 * dt;
@@ -100,7 +102,7 @@ export function updateSurvival(game, dt) {
   } else if (t - p.lastHit > 4 && p.hp < p.maxHp) {
     p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.0025 * dt);
   }
-  if (sv.hunger < 25 && !sv.warnedHunger) { sv.warnedHunger = true; game.hud.toast("I'm hungry! " + FOOD_HINT[p.spec.diet], 4); }
+  if (sv.hunger < 25 && !sv.warnedHunger) { sv.warnedHunger = true; game.hud.toast("I'm hungry! " + (p.spec.foodHint || FOOD_HINT[p.spec.diet]), 4); }
   if (sv.thirst < 25 && !sv.warnedThirst) { sv.warnedThirst = true; game.hud.toast("I'm thirsty! Find water and press E.", 4); }
 
   // pickups bob and time out
@@ -113,9 +115,14 @@ export function updateSurvival(game, dt) {
   }
 
   const reach = p.radius + 3.5;
-  const eatsMeat = p.spec.diet !== 'plant';
+  const diet = p.spec.diet;
+  const eatsMeat = diet !== 'plant' && diet !== 'leaves';
   let food = null, foodI = -1;
-  if (eatsMeat) {
+  if (diet === 'leaves') { // Brachiosaurus: leaves high up in the tall trees
+    for (const tr of w.tallTrees) {
+      if (tr.ready && Math.hypot(tr.x - p.pos.x, tr.z - p.pos.z) < reach + 1) { food = tr; break; }
+    }
+  } else if (eatsMeat) {
     game.pickups.forEach((k, i) => {
       if (Math.hypot(k.x - p.pos.x, k.z - p.pos.z) < reach && Math.abs(k.y - p.pos.y) < 6) { food = k; foodI = i; }
     });
@@ -125,22 +132,23 @@ export function updateSurvival(game, dt) {
     }
   }
 
-  // Pteranodons snatch fish just by swooping through them
-  if (p.spec.diet === 'fish') {
+  // Pterosaurs snatch fish by swooping through them; a Mosasaurus just swims through
+  if (diet === 'fish') {
+    const catchR = Math.max(3.5, p.radius + 2);
     for (const f of w.fish) {
       if (!f.ready) continue;
       const fp = f.group.position;
-      if (Math.hypot(fp.x - p.pos.x, fp.z - p.pos.z) < 3.5 && Math.abs(fp.y - p.pos.y) < 4) {
+      if (Math.hypot(fp.x - p.pos.x, fp.z - p.pos.z) < catchR && Math.abs(fp.y - p.pos.y) < 4) {
         f.ready = false; f.regrow = 25; f.group.visible = false;
         feed(game, 35);
       }
     }
   }
 
-  const water = p.onGround ? waterKind(p.pos.x, p.pos.z, p.radius + 2) : null;
+  const water = p.onGround && !p.spec.swim ? waterKind(p.pos.x, p.pos.z, p.radius + 2) : null;
   sv.busy -= dt;
   let prompt = '';
-  if (food && sv.hunger < 97) prompt = eatsMeat ? 'Press E to eat' : 'Press E to munch berries';
+  if (food && sv.hunger < 97) prompt = diet === 'leaves' ? 'Press E to eat leaves' : eatsMeat ? 'Press E to eat' : 'Press E to munch berries';
   else if (water === 'salt') prompt = 'Press E to drink sea water';
   else if (water && sv.thirst < 97) prompt = 'Press E to drink';
   game.hud.setPrompt(prompt);
@@ -160,6 +168,9 @@ export function updateSurvival(game, dt) {
       game.sfx.drink();
       const head = p.pos.clone(); head.y += p.spec.headH;
       game.effects.word(head, 'GULP!', '#7fd4ff', 2.2);
+    } else if (diet === 'leaves') {
+      w.eatTallTree(food);
+      feed(game, 40);
     } else if (eatsMeat) {
       feed(game, food.food);
       removePickup(game, foodI);

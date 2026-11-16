@@ -1,12 +1,13 @@
 // On-screen display: meters, boss bar, minimap, crowns and messages.
-import { getHeight, zoneAt, NESTS } from './world.js';
+import { getHeight, zoneAt, NESTS, ZONES, WORLD_BOUNDS } from './world.js';
 import { BOSSES, BOSS_ORDER } from './bosses.js';
 
 const $ = (id) => document.getElementById(id);
-const MAP = 160, WORLD = 680;
-const toMap = (v) => (v + WORLD / 2) / WORLD * MAP;
+// The minimap follows you: it shows MAP * PX metres across, one pixel per PX metres.
+const MAP = 160, PX = 3;
 const ZONE_COLORS = {
   grass: '#86cf58', jungle: '#3f9b4b', plains: '#b5d76a', canyon: '#c0915f', volcano: '#5b5552', lake: '#86cf58',
+  fern: '#5aa844', forest: '#3e8a3a', fernLake: '#5aa844', sky: '#9a917f',
 };
 
 export class Hud {
@@ -19,23 +20,30 @@ export class Hud {
     this.toastT = 0;
     this.promptText = '';
     this.ctx = this.el.map.getContext('2d');
+    // the whole world drawn once, one pixel per PX metres
+    const B = WORLD_BOUNDS, W = (B.x1 - B.x0) / PX, H = (B.z1 - B.z0) / PX;
     this.base = document.createElement('canvas');
-    this.base.width = this.base.height = MAP;
+    this.base.width = W; this.base.height = H;
     const c = this.base.getContext('2d');
-    for (let py = 0; py < MAP; py += 2) for (let px = 0; px < MAP; px += 2) {
-      const x = (px + 1) / MAP * WORLD - WORLD / 2, z = (py + 1) / MAP * WORLD - WORLD / 2;
+    const img = c.createImageData(W, H), hex = (s) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
+    for (let py = 0; py < H; py++) for (let px = 0; px < W; px++) {
+      const x = B.x0 + (px + 0.5) * PX, z = B.z0 + (py + 0.5) * PX;
       const h = getHeight(x, z);
-      c.fillStyle = h < 0 ? '#35a5e6' : h < 1.5 ? '#ecd9a0' : ZONE_COLORS[zoneAt(x, z)];
-      c.fillRect(px, py, 2, 2);
+      const col = hex(h < 0 ? '#35a5e6' : h < 1.5 ? '#ecd9a0' : ZONE_COLORS[zoneAt(x, z)] || '#86cf58');
+      img.data.set([...col, 255], (py * W + px) * 4);
     }
+    c.putImageData(img, 0, 0);
+    const v = ZONES.volcano;
     c.fillStyle = '#ff7a1a';
-    c.beginPath(); c.arc(toMap(20), toMap(-195), 4, 0, 6.3); c.fill();
+    c.beginPath(); c.arc((v.x - B.x0) / PX, (v.z - B.z0) / PX, 4, 0, 6.3); c.fill();
   }
 
   setSpecies(spec) {
     this.el.specialName.textContent = spec.specialName;
     this.el.attackName.textContent = spec.attackName;
-    const fly = spec.fly ? '<b>Space</b> fly up &nbsp; <b>Shift</b> fly down' : '<b>Space</b> jump &nbsp; <b>Shift</b> run';
+    const fly = spec.fly ? '<b>Space</b> fly up &nbsp; <b>Shift</b> fly down'
+      : spec.swim ? '<b>Shift</b> swim fast &nbsp; (stays in the water)'
+        : spec.jump ? '<b>Space</b> jump &nbsp; <b>Shift</b> run' : '<b>Shift</b> run';
     this.el.hint.innerHTML = `<b>WASD</b> move &nbsp; <b>Mouse</b> look<br>${fly}<br><b>Click / J</b> ${spec.attackName} &nbsp; <b>Right-click / K</b> ${spec.specialName}<br><b>E</b> eat / drink &nbsp; <b>P</b> pause`;
   }
 
@@ -76,22 +84,26 @@ export class Hud {
     e.boss.classList.toggle('show', !!b);
     if (b) { e.bossName.textContent = b.boss.name; e.bossFill.style.width = b.hp / b.maxHp * 100 + '%'; }
 
-    // minimap
-    const c = this.ctx;
+    // minimap, centred on you
+    const c = this.ctx, B = WORLD_BOUNDS, half = MAP / 2;
+    const mx = (x) => half + (x - p.pos.x) / PX, mz = (z) => half + (z - p.pos.z) / PX;
     c.clearRect(0, 0, MAP, MAP);
-    c.drawImage(this.base, 0, 0);
+    c.drawImage(this.base, mx(B.x0), mz(B.z0));
     c.fillStyle = '#fff'; c.strokeStyle = '#7a5230'; c.lineWidth = 1.5;
-    for (const n of NESTS) { c.beginPath(); c.arc(toMap(n.x), toMap(n.z), 2.5, 0, 6.3); c.fill(); c.stroke(); }
+    for (const n of NESTS) { c.beginPath(); c.arc(mx(n.x), mz(n.z), 2.5, 0, 6.3); c.fill(); c.stroke(); }
     c.font = '13px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
     for (const id of BOSS_ORDER) {
       if (game.save.crowns[id]) continue;
-      const bx = toMap(BOSSES[id].x), bz = toMap(BOSSES[id].z);
+      let bx = mx(BOSSES[id].x) - half, bz = mz(BOSSES[id].z) - half;
+      const d = Math.hypot(bx, bz), edge = half - 10;
+      if (d > edge) { bx *= edge / d; bz *= edge / d; } // off the map: pin it to the edge
+      bx += half; bz += half;
       c.fillStyle = '#e63946'; c.strokeStyle = '#fff'; c.lineWidth = 2;
       c.beginPath(); c.arc(bx, bz, 6 + Math.sin(game.time * 4) * 1, 0, 6.3); c.fill(); c.stroke();
       c.fillStyle = '#fff'; c.fillText('!', bx, bz + 0.5);
     }
     c.save();
-    c.translate(toMap(p.pos.x), toMap(p.pos.z));
+    c.translate(half, half);
     c.rotate(-p.yaw);
     c.fillStyle = '#fff'; c.strokeStyle = '#222'; c.lineWidth = 1.5;
     c.beginPath(); c.moveTo(0, 7); c.lineTo(5, -5); c.lineTo(0, -2); c.lineTo(-5, -5); c.closePath();

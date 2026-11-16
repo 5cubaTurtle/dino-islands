@@ -4,6 +4,19 @@ import { Dino, angleLerp, groundAt } from './entity.js';
 import { getHeight } from './world.js';
 import { damage } from './combat.js';
 import { updateBoss } from './bosses.js';
+import { sameKind } from './player.js';
+
+const ASLEEP_AT = 420; // wild animals further than this from the player pause and hide
+
+/** A random spot in water at least `depth` deep near (cx, cz), or null. */
+function seaSpot(cx, cz, r, depth = 4) {
+  for (let i = 0; i < 30; i++) {
+    const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * r;
+    const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+    if (getHeight(x, z) < -depth) return { x, z };
+  }
+  return null;
+}
 
 function addHealthBar(n) {
   const cv = document.createElement('canvas');
@@ -42,10 +55,11 @@ export function spawnNpc(game, key, hx, hz, opts = {}) {
   n.wanderT = 0; n.target = null; n.idle = false;
   n.gone = false; n.respawnT = 0;
   n.yaw = Math.random() * 6.28;
-  const spot = game.world.landSpot(Math.random, hx, hz, opts.spread ?? 10) || n.home;
+  const spot = (n.swimmer ? seaSpot(hx, hz, opts.spread ?? 10) : game.world.landSpot(Math.random, hx, hz, opts.spread ?? 10)) || n.home;
   n.place(spot.x, spot.z);
-  if (key === 'ptera' && !n.boss) {
-    n.air = { mode: 'circle', ang: Math.random() * 6.28, r: 22 + Math.random() * 18, alt: 16 + Math.random() * 10, dir: Math.random() < 0.5 ? 1 : -1, swoopT: 6 + Math.random() * 10, t: 0 };
+  if (n.spec.fly && !n.boss) {
+    const big = key === 'quetz' ? 1.6 : 1;
+    n.air = { mode: 'circle', ang: Math.random() * 6.28, r: (22 + Math.random() * 18) * big, alt: (16 + Math.random() * 10) * big, dir: Math.random() < 0.5 ? 1 : -1, swoopT: 6 + Math.random() * 10, t: 0 };
     n.hover = true;
     n.pos.y += n.air.alt;
     n.onGround = false;
@@ -63,6 +77,14 @@ export function spawnWildlife(game) {
   group('raptor', [[150, 40], [190, 110], [110, 150], [-60, -140]], 3);
   group('trex', [[-160, -70], [-190, -20], [-130, -110]], 1);
   group('ptera', [[30, -20], [0, 120], [-200, 60], [200, 0], [20, -195], [100, -120]], 1);
+  // Fern Island
+  group('anky', [[560, -110], [680, 40]], 3);
+  group('pachy', [[520, 10], [620, -150], [720, -20]], 3);
+  group('brachio', [[665, -75], [600, 60]], 2);
+  // Sky Rock (and one over Fern Island)
+  group('quetz', [[-60, 432], [-40, 405], [-95, 455], [650, -30]], 1);
+  // the sea between the islands
+  group('mosa', [[360, 40], [-20, 320], [-320, -90], [140, -320], [600, 240], [450, -250]], 1);
 }
 
 /** Walk/run toward a point, turning smoothly. */
@@ -88,6 +110,7 @@ function fly(n, tx, ty, tz, speed, dt) {
 
 function thinkPtera(game, n, dt, active, d) {
   const p = game.player, a = n.air;
+  if (sameKind(p, n)) active = false; // never swoops at its own kind
   n.hover = true;
   a.t += dt;
   const circle = () => {
@@ -135,12 +158,17 @@ function think(game, n, dt, active) {
   const hd = Math.hypot(n.pos.x - n.home.x, n.pos.z - n.home.z);
   const reachableY = p.pos.y - n.pos.y < 5 + n.radius;
   let aggro = false;
-  if (active && reachableY) {
+  if (active && reachableY && !sameKind(p, n)) {
     const angry = n.angryT > 0 && d < 45;
     if (n.boss) aggro = d < 45 && hd < 80;
     else if (n.summon) aggro = d < 60;
+    else if (n.swimmer) { // a Mosasaurus hunts whatever is swimming near it
+      const inWater = getHeight(p.pos.x, p.pos.z) < -0.5 && p.pos.y < 1;
+      aggro = inWater && ((d < 30 && hd < 120) || angry);
+    }
     else if (n.key === 'raptor') aggro = (d < 26 && hd < 70) || angry;
     else if (n.key === 'trex') aggro = (d < 30 && hd < 70) || angry;
+    else if (n.key === 'pachy') aggro = (d < 12 && hd < 50) || angry; // grumpy: gets butting if you come close
     else aggro = angry;
   }
 
@@ -170,9 +198,10 @@ function think(game, n, dt, active) {
     n.idle = Math.random() < 0.35 && hd < 40;
     n.target = n.home;
     for (let i = 0; i < 5; i++) {
-      const a = Math.random() * 6.28, r = 5 + Math.random() * 24;
+      const a = Math.random() * 6.28, r = (5 + Math.random() * 24) * (n.swimmer ? 2 : 1);
       const tx = n.home.x + Math.cos(a) * r, tz = n.home.z + Math.sin(a) * r;
-      if (getHeight(tx, tz) > 0.5) { n.target = { x: tx, z: tz }; break; }
+      const h = getHeight(tx, tz);
+      if (n.swimmer ? h < -4 : h > 0.5) { n.target = { x: tx, z: tz }; break; }
     }
   }
   if (!n.idle && Math.hypot(n.target.x - n.pos.x, n.target.z - n.pos.z) > 2.5) {
@@ -181,7 +210,7 @@ function think(game, n, dt, active) {
 }
 
 function respawn(game, n) {
-  const spot = game.world.landSpot(Math.random, n.home.x, n.home.z, 12) || n.home;
+  const spot = (n.swimmer ? seaSpot(n.home.x, n.home.z, 20) : game.world.landSpot(Math.random, n.home.x, n.home.z, 12)) || n.home;
   // don't pop in right next to the player
   if (Math.hypot(spot.x - game.player.pos.x, spot.z - game.player.pos.z) < 45) { n.respawnT = 5; return; }
   n.hp = n.maxHp; n.ko = false; n.gone = false;
@@ -215,6 +244,12 @@ export function updateNpcs(game, dt) {
       }
       continue;
     }
+    // far away from the player: pause and hide (saves a lot of work with ~60 animals)
+    if (!n.boss && Math.hypot(n.pos.x - p.pos.x, n.pos.z - p.pos.z) > ASLEEP_AT) {
+      if (!n.asleep) { n.asleep = true; n.setVisible(false); }
+      continue;
+    }
+    if (n.asleep) { n.asleep = false; n.setVisible(true); }
     think(game, n, dt, active);
     n.physics(dt);
     n.sync(dt, game.time);
@@ -222,7 +257,7 @@ export function updateNpcs(game, dt) {
 
   // keep dinosaurs from standing inside each other
   const all = [p];
-  for (const n of game.npcs) if (!n.gone && !n.ko) all.push(n);
+  for (const n of game.npcs) if (!n.gone && !n.ko && !n.asleep) all.push(n);
   for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
     const a = all[i], b = all[j];
     const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;

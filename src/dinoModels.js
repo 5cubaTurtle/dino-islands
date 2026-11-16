@@ -1,5 +1,6 @@
 // Procedural low-poly dinosaur models. Every model faces +Z with its feet at y=0.
 import * as THREE from 'three';
+import { DETAILED, PALETTES2 } from './models2.js';
 
 export const PALETTES = {
   trex: { main: 0x5f9a3a, belly: 0xe2d99a, dark: 0x3d6425, accent: 0x3d6425 },
@@ -229,7 +230,10 @@ function ptera(p) {
 }
 
 const BUILDERS = { trex, trike, raptor, ptera };
+Object.assign(PALETTES, PALETTES2);
 
 export function buildDino(key, paletteName) {
-  return BUILDERS[key](PALETTES[paletteName || key]);
+  const pal = paletteName || key;
+  if (DETAILED[key]) return DETAILED[key](PALETTES[pal], `${key}:${pal}:`);
+  return BUILDERS[key](PALETTES[pal]);
 }

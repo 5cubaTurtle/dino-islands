@@ -1,17 +1,49 @@
-// The island: heightmap terrain, water, scenery, food sources and nests.
+// The islands: heightmap terrain, water, scenery, food sources and nests.
 import * as THREE from 'three';
+import { Kit } from './geom.js';
 
 export const ISLAND_R = 300;
+// Dino Island is the original island in the middle. Fern Island (big, to the
+// east) is home to Ankylosaurus, Pachycephalosaurus and Brachiosaurus; Sky Rock
+// (small, to the north) is where the Quetzalcoatlus roost.
+export const ISLANDS = {
+  main: { name: 'Dino Island', x: 0, z: 0, r: 300 },
+  fern: { name: 'Fern Island', x: 600, z: -21, r: 210 },
+  sky: { name: 'Sky Rock', x: -60, z: 432, r: 80 },
+};
 export const ZONES = {
   jungle: { x: 140, z: 90, r: 100 },
   plains: { x: -120, z: 110, r: 100 },
   lake: { x: 30, z: -20, r: 38 },
   canyon: { x: -160, z: -70, r: 80 },
   volcano: { x: 20, z: -195, r: 75 },
+  fernLake: { x: 560, z: 30, r: 30 },
+  forest: { x: 665, z: -75, r: 105 },
 };
+// Nests: where you start and wake up. Index 0 is the original starting nest.
 export const NESTS = [
   { x: 0, z: 35 }, { x: 85, z: 55 }, { x: -70, z: 75 }, { x: -105, z: -35 }, { x: -30, z: -60 },
+  { x: 520, z: -60, island: 'fern' }, { x: 640, z: 90, island: 'fern' }, { x: -60, z: 440, island: 'sky' },
 ];
+// Open-sea spots where a Mosasaurus starts and wakes up.
+export const SEA_SPAWNS = [{ x: 360, z: 40 }, { x: -20, z: 315 }, { x: -320, z: -90 }, { x: 130, z: -320 }, { x: 600, z: 230 }];
+
+// The world map: a grid of CELL-metre squares covering every island.
+const X0 = -360, X1 = 870, Z0 = -360, Z1 = 570;
+export const WORLD_BOUNDS = { x0: X0, x1: X1, z0: Z0, z1: Z1 };
+/** Which island a point is on (or near), or null out at sea. */
+export function islandAt(x, z) {
+  for (const id of ['main', 'fern', 'sky']) {
+    const I = ISLANDS[id];
+    if (Math.hypot(x - I.x, z - I.z) < I.r - (id === 'main' ? 40 : 30)) return id;
+  }
+  return null;
+}
+/** Keep a position inside the world map. */
+export function clampToWorld(p) {
+  p.x = Math.min(X1 - 15, Math.max(X0 + 15, p.x));
+  p.z = Math.min(Z1 - 15, Math.max(Z0 + 15, p.z));
+}
 const RIVER = { x1: 30, z1: -20, x2: 310, z2: -70 };
 
 // ---- noise -----------------------------------------------------------------
@@ -48,8 +80,9 @@ function riverDist(x, z) {
   return Math.hypot(x - (RIVER.x1 + vx * t), z - (RIVER.z1 + vz * t) - wig);
 }
 
-function rawHeight(x, z) {
+function mainHeight(x, z) {
   const d = Math.hypot(x, z);
+  if (d > 296) return -6;
   let h = 3 + fbm(x * 0.012 + 5, z * 0.012 + 9) * 14 + fbm(x * 0.05, z * 0.05) * 2.5;
   const pw = zoneW('plains', x, z);
   h = lerp(h, 6 + (h - 6) * 0.25, pw);
@@ -65,31 +98,53 @@ function rawHeight(x, z) {
   return h;
 }
 
+function fernHeight(x, z) {
+  const I = ISLANDS.fern, d = Math.hypot(x - I.x, z - I.z);
+  if (d > I.r + 26) return -6;
+  let h = 3 + fbm(x * 0.011 + 31, z * 0.011 - 7) * 13 + fbm(x * 0.05 + 3, z * 0.05) * 2;
+  const L = ZONES.fernLake, dl = Math.hypot(x - L.x, z - L.z);
+  h = lerp(h, 3.5, sstep(L.r * 2.4, L.r * 1.25, dl)); // gentle slopes down to the lake
+  h = lerp(h, -3, sstep(L.r, L.r * 0.35, dl));
+  return lerp(-6, h, sstep(I.r + 25, I.r - 50, d));
+}
+
+function skyHeight(x, z) {
+  const I = ISLANDS.sky, d = Math.hypot(x - I.x, z - I.z);
+  if (d > I.r + 21) return -6;
+  const h = 2 + 24 * sstep(I.r - 8, 10, d) + (fbm(x * 0.07 + 11, z * 0.07 - 4) - 0.5) * 3;
+  return lerp(-6, h, sstep(I.r + 20, I.r - 25, d));
+}
+
+function rawHeight(x, z) {
+  return Math.max(mainHeight(x, z), fernHeight(x, z), skyHeight(x, z));
+}
+
 // ---- height grid (matches the rendered mesh) -------------------------------
-const SIZE = 720, SEG = 240, CELL = SIZE / SEG, NV = SEG + 1;
-const grid = new Float32Array(NV * NV);
+const CELL = 3, NX = (X1 - X0) / CELL, NZ = (Z1 - Z0) / CELL, NV = NX + 1;
+const grid = new Float32Array(NV * (NZ + 1));
 let gridReady = false;
 function buildGrid() {
-  for (let iz = 0; iz < NV; iz++) for (let ix = 0; ix < NV; ix++) {
-    grid[iz * NV + ix] = rawHeight(-SIZE / 2 + ix * CELL, -SIZE / 2 + iz * CELL);
+  for (let iz = 0; iz <= NZ; iz++) for (let ix = 0; ix <= NX; ix++) {
+    grid[iz * NV + ix] = rawHeight(X0 + ix * CELL, Z0 + iz * CELL);
   }
   gridReady = true;
 }
 export function getHeight(x, z) {
   if (!gridReady) buildGrid();
-  const fx = (x + SIZE / 2) / CELL, fz = (z + SIZE / 2) / CELL;
-  if (fx < 0 || fz < 0 || fx >= SEG || fz >= SEG) return -6;
+  const fx = (x - X0) / CELL, fz = (z - Z0) / CELL;
+  if (fx < 0 || fz < 0 || fx >= NX || fz >= NZ) return -6;
   const ix = Math.floor(fx), iz = Math.floor(fz), u = fx - ix, v = fz - iz;
   const i = iz * NV + ix;
   const a = grid[i], b = grid[i + 1], c = grid[i + NV], d = grid[i + NV + 1];
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
 export function zoneAt(x, z) {
-  for (const name of ['volcano', 'lake', 'canyon', 'jungle', 'plains']) {
+  for (const name of ['volcano', 'lake', 'canyon', 'jungle', 'plains', 'fernLake', 'forest']) {
     const c = ZONES[name];
     if (Math.hypot(x - c.x, z - c.z) < c.r) return name;
   }
-  return 'grass';
+  const isl = islandAt(x, z);
+  return isl === 'fern' ? 'fern' : isl === 'sky' ? 'sky' : 'grass';
 }
 // The lava surface sits this far above the lowest point of the crater. The
 // crater floor rises about 0.8 m per metre, so 8 gives a pool ~10 m in radius.
@@ -128,7 +183,8 @@ export function waterKind(x, z, r) {
     const a = i * Math.PI / 3, k = i < 6 ? r : 0;
     const sx = x + Math.cos(a) * k, sz = z + Math.sin(a) * k;
     if (getHeight(sx, sz) >= 0.15) continue;
-    if (Math.hypot(sx, sz) <= 225 || riverDist(sx, sz) < 12) return 'fresh';
+    const L = ZONES.fernLake;
+    if (Math.hypot(sx, sz) <= 225 || riverDist(sx, sz) < 12 || Math.hypot(sx - L.x, sz - L.z) < L.r + 6) return 'fresh';
     kind = 'salt';
   }
   return kind;
@@ -205,6 +261,7 @@ const COL = {
   sand: new THREE.Color(0xecd9a0), grass: new THREE.Color(0x86cf58), jungle: new THREE.Color(0x3f9b4b),
   plains: new THREE.Color(0xb5d76a), canyon: new THREE.Color(0xc0915f), rock: new THREE.Color(0x5b5552),
   lava: new THREE.Color(0xc0452a), bed: new THREE.Color(0xc9bb86),
+  fern: new THREE.Color(0x5aa844), forest: new THREE.Color(0x3e8a3a), cliff: new THREE.Color(0x8a8172),
 };
 function groundColor(x, z, h, out) {
   if (h < 0) return out.copy(COL.bed);
@@ -215,6 +272,12 @@ function groundColor(x, z, h, out) {
   const v = ZONES.volcano, dv = Math.hypot(x - v.x, z - v.z);
   out.lerp(COL.rock, sstep(v.r, v.r * 0.7, dv));
   out.lerp(COL.lava, sstep(26, 14, dv));
+  const F = ISLANDS.fern, S = ISLANDS.sky;
+  if (Math.hypot(x - F.x, z - F.z) < F.r + 30) {
+    out.lerp(COL.fern, 0.7);
+    out.lerp(COL.forest, zoneW('forest', x, z, 0.5));
+  }
+  if (Math.hypot(x - S.x, z - S.z) < S.r + 25) out.lerp(COL.cliff, sstep(5, 14, h) * 0.8);
   out.lerp(COL.sand, sstep(2.0, 0.6, h));
   const n = 0.92 + hash(Math.floor(x / 3), Math.floor(z / 3)) * 0.16;
   out.multiplyScalar(n);
@@ -229,24 +292,18 @@ export class World {
     if (!gridReady) buildGrid();
     const rnd = mulberry(20261115);
     this.rnd = rnd;
+    // The new islands use their own random stream so Dino Island stays exactly as it was.
+    const rnd2 = mulberry(5150);
 
-    // terrain
-    const g = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
-    g.rotateX(-Math.PI / 2);
-    const pos = g.attributes.position;
-    const colors = new Float32Array(pos.count * 3);
-    const c = new THREE.Color();
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), z = pos.getZ(i);
-      const ix = Math.round((x + SIZE / 2) / CELL), iz = Math.round((z + SIZE / 2) / CELL);
-      const h = grid[iz * NV + ix];
-      pos.setY(i, h);
-      groundColor(x, z, h, c);
-      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    // terrain: one mesh per island (the open sea floor between them is a flat plane)
+    const ground = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    for (const [x0, x1, z0, z1] of [[-360, 360, -360, 360], [360, 840, -261, 219], [-168, 48, 360, 540]]) {
+      scene.add(new THREE.Mesh(this.terrainPatch(x0, x1, z0, z1), ground));
     }
-    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    g.computeVertexNormals();
-    scene.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshLambertMaterial({ color: COL.bed }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(250, -6.05, 100);
+    scene.add(floor);
 
     // water
     const water = new THREE.Mesh(new THREE.CircleGeometry(1800, 48),
@@ -262,25 +319,51 @@ export class World {
     this.lava.position.set(v.x, lavaLevel(), v.z);
     scene.add(this.lava);
 
-    this.buildTrees(rnd);
-    this.buildRocks(rnd);
+    this.buildTrees(rnd, rnd2);
+    this.buildRocks(rnd, rnd2);
     this.buildClouds(rnd);
     this.buildNests();
-    this.buildBushes(rnd);
-    this.buildFish(rnd);
+    this.buildBushes(rnd, rnd2);
+    this.buildFish(rnd, rnd2);
+    this.buildTallTrees(rnd2);
+    this.buildFerns(rnd2);
+  }
+
+  /** Terrain mesh for the grid squares inside x0..x1, z0..z1 (multiples of CELL). */
+  terrainPatch(x0, x1, z0, z1) {
+    const w = x1 - x0, d = z1 - z0;
+    const g = new THREE.PlaneGeometry(w, d, w / CELL, d / CELL);
+    g.rotateX(-Math.PI / 2);
+    g.translate(x0 + w / 2, 0, z0 + d / 2);
+    const pos = g.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const ix = Math.round((x - X0) / CELL), iz = Math.round((z - Z0) / CELL);
+      const h = grid[iz * NV + ix];
+      pos.setY(i, h);
+      groundColor(x, z, h, c);
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    g.computeVertexNormals();
+    return g;
   }
 
   /** Random dry-land spot inside a disc, or null if none found. */
   landSpot(rnd, cx, cz, r, minH = 1.5) {
+    const F = ISLANDS.fern, S = ISLANDS.sky;
     for (let i = 0; i < 12; i++) {
       const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * r;
       const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
-      if (Math.hypot(x, z) < 270 && getHeight(x, z) > minH) return { x, z };
+      const inside = Math.hypot(x, z) < 270 || Math.hypot(x - F.x, z - F.z) < F.r - 30 || Math.hypot(x - S.x, z - S.z) < S.r - 12;
+      if (inside && getHeight(x, z) > minH) return { x, z };
     }
     return null;
   }
 
-  buildTrees(rnd) {
+  buildTrees(rnd, rnd2) {
     this.trees = [];
     const spots = [];
     const ok = (s) => s && !['volcano', 'lake'].includes(zoneAt(s.x, s.z))
@@ -293,14 +376,19 @@ export class World {
       if (ok(s) && !['plains', 'canyon'].includes(zoneAt(s.x, s.z))) spots.push(s);
     }
     for (let i = 0; i < 14; i++) { const s = this.landSpot(rnd, ZONES.plains.x, ZONES.plains.z, 95); if (ok(s)) spots.push(s); }
+    // Fern Island: woods everywhere except the lake shore and the nests
+    const F = ISLANDS.fern, extra = [];
+    const ok2 = (s) => s && zoneAt(s.x, s.z) !== 'fernLake' && NESTS.every((n) => Math.hypot(s.x - n.x, s.z - n.z) > 10);
+    for (let i = 0; i < 240; i++) { const s = this.landSpot(rnd2, F.x, F.z, F.r - 40); if (ok2(s)) extra.push(s); }
 
     const trunkG = new THREE.CylinderGeometry(0.3, 0.5, 5, 6); trunkG.translate(0, 2.5, 0);
     const leafG = new THREE.ConeGeometry(2.8, 6.5, 7); leafG.translate(0, 7.2, 0);
-    const trunks = new THREE.InstancedMesh(trunkG, lam(0x8b5a2b), spots.length);
-    const leaves = new THREE.InstancedMesh(leafG, lam(0xffffff), spots.length);
+    const total = spots.length + extra.length;
+    const trunks = new THREE.InstancedMesh(trunkG, lam(0x8b5a2b), total);
+    const leaves = new THREE.InstancedMesh(leafG, lam(0xffffff), total);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
     const col = new THREE.Color();
-    spots.forEach((s, i) => {
+    const place = (s, i, rnd) => {
       const k = 0.8 + rnd() * 0.9;
       p.set(s.x, getHeight(s.x, s.z) - 0.3, s.z);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rnd() * 6.28);
@@ -314,7 +402,9 @@ export class World {
       trunks.setMatrixAt(i, m); leaves.setMatrixAt(i, m);
       col.setHSL(0.28 + rnd() * 0.1, 0.55, 0.28 + rnd() * 0.12);
       leaves.setColorAt(i, col);
-    });
+    };
+    spots.forEach((s, i) => place(s, i, rnd));
+    extra.forEach((s, j) => place(s, spots.length + j, rnd2));
     this.scene.add(trunks, leaves);
     this.treeMeshes = [trunks, leaves];
   }
@@ -391,16 +481,21 @@ export class World {
     if (dirty) for (const mesh of this.treeMeshes) mesh.instanceMatrix.needsUpdate = true;
   }
 
-  buildRocks(rnd) {
+  buildRocks(rnd, rnd2) {
     const spots = [];
     const cz = ZONES.canyon;
     for (let i = 0; i < 110; i++) { const s = this.landSpot(rnd, cz.x, cz.z, cz.r, 1); if (s) spots.push(s); }
     for (let i = 0; i < 50; i++) { const s = this.landSpot(rnd, ZONES.volcano.x, ZONES.volcano.z, 95, 1); if (s) spots.push(s); }
     for (let i = 0; i < 50; i++) { const s = this.landSpot(rnd, 0, 0, 265, 0.8); if (s) spots.push(s); }
-    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), lam(0xffffff), spots.length);
+    const extra = [];
+    const S = ISLANDS.sky, F = ISLANDS.fern;
+    const clear = (s) => s && NESTS.every((n) => Math.hypot(s.x - n.x, s.z - n.z) > 8);
+    for (let i = 0; i < 45; i++) { const s = this.landSpot(rnd2, S.x, S.z, S.r - 12, 1); if (clear(s)) extra.push(s); }
+    for (let i = 0; i < 30; i++) { const s = this.landSpot(rnd2, F.x, F.z, F.r - 30, 0.8); if (clear(s)) extra.push(s); }
+    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), lam(0xffffff), spots.length + extra.length);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), p = new THREE.Vector3();
     const col = new THREE.Color();
-    spots.forEach((s, i) => {
+    const place = (s, i, rnd) => {
       const k = 0.5 + rnd() * rnd() * 3.2;
       p.set(s.x, getHeight(s.x, s.z) + k * 0.2, s.z);
       e.set(rnd() * 3, rnd() * 3, rnd() * 3); q.setFromEuler(e);
@@ -411,7 +506,9 @@ export class World {
       const gray = 0.42 + rnd() * 0.2;
       col.setRGB(gray * 1.05, gray, gray * 0.92);
       rocks.setColorAt(i, col);
-    });
+    };
+    spots.forEach((s, i) => place(s, i, rnd));
+    extra.forEach((s, j) => place(s, spots.length + j, rnd2));
     this.scene.add(rocks);
   }
 
@@ -452,7 +549,7 @@ export class World {
     }
   }
 
-  buildBushes(rnd) {
+  buildBushes(rnd, rnd2) {
     this.bushes = [];
     const leafG = new THREE.SphereGeometry(1.2, 7, 5), berryG = new THREE.SphereGeometry(0.22, 6, 4);
     const leafM = lam(0x2e8b57), berryM = lam(0xe63946);
@@ -478,45 +575,175 @@ export class World {
     place(ZONES.plains.x, ZONES.plains.z, 95, 18);
     place(ZONES.jungle.x, ZONES.jungle.z, 95, 10);
     place(0, 0, 250, 26);
+    // Fern Island meadows (a separate random stream keeps Dino Island unchanged)
+    const F = ISLANDS.fern;
+    rnd = rnd2;
+    place(F.x - 40, F.z + 40, 110, 16);
+    place(F.x, F.z, F.r - 40, 14);
   }
 
-  buildFish(rnd) {
+  buildFish(rnd, rnd2) {
     this.fish = [];
-    const bodyG = new THREE.SphereGeometry(0.45, 7, 5), tailG = new THREE.ConeGeometry(0.35, 0.6, 4);
-    const mat = lam(0xff8c42);
-    const add = (x, z) => {
-      const grp = new THREE.Group();
-      const body = new THREE.Mesh(bodyG, mat); body.scale.set(0.5, 0.8, 1.5);
-      const tail = new THREE.Mesh(tailG, mat); tail.rotation.x = Math.PI / 2; tail.position.z = -0.85;
-      grp.add(body, tail);
+    const fishGeo = (color, fin) => {
+      const k = new Kit();
+      k.blob(0.23, 0.36, 0.68, color, [0, 0, 0]);
+      k.add(new THREE.ConeGeometry(0.35, 0.6, 4), color, { p: [0, 0, -0.85], r: [-Math.PI / 2, 0, 0], s: [0.3, 1, 1] });
+      k.add(new THREE.ConeGeometry(0.2, 0.4, 4), fin, { p: [0, 0.35, -0.1], s: [0.2, 1, 1] });
+      k.blob(0.05, 0.05, 0.05, 0x111111, [0.17, 0.08, 0.42]); k.blob(0.05, 0.05, 0.05, 0x111111, [-0.17, 0.08, 0.42]);
+      return k.geometry();
+    };
+    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    const lakeG = fishGeo(0xff8c42, 0xe0602a), seaG = fishGeo(0x9fbfd2, 0x56788f);
+    const add = (x, z, geo, swim = null, r = rnd) => {
+      const grp = new THREE.Mesh(geo, mat);
       grp.position.set(x, -1, z);
       this.scene.add(grp);
-      this.fish.push({ x, z, group: grp, phase: rnd() * 6.28, ready: true, regrow: 0 });
+      this.fish.push({ x, z, group: grp, phase: r() * 6.28, ready: true, regrow: 0, swim });
     };
     const l = ZONES.lake;
     for (let i = 0; i < 10; i++) {
       const a = rnd() * 6.28, d = Math.sqrt(rnd()) * l.r * 0.55;
-      add(l.x + Math.cos(a) * d, l.z + Math.sin(a) * d);
+      add(l.x + Math.cos(a) * d, l.z + Math.sin(a) * d, lakeG);
     }
     for (let i = 0; i < 12; i++) { // around the coast
       const a = i / 12 * 6.28 + rnd() * 0.3;
-      add(Math.cos(a) * 292, Math.sin(a) * 292);
+      add(Math.cos(a) * 292, Math.sin(a) * 292, seaG);
     }
+    // More fish out at sea for the Mosasaurus: small schools swimming in circles
+    const school = (cx, cz, n) => {
+      for (let i = 0; i < n; i++) {
+        const x = cx + (rnd2() - 0.5) * 8, z = cz + (rnd2() - 0.5) * 8;
+        if (getHeight(x, z) > -2.5) continue;
+        const swim = { cx: x, cz: z, r: 2 + rnd2() * 4, w: (0.25 + rnd2() * 0.3) * (rnd2() < 0.5 ? -1 : 1), a: rnd2() * 6.28 };
+        add(x, z, seaG, swim, rnd2);
+      }
+    };
+    const ring = (I, d, count) => {
+      for (let i = 0; i < count; i++) {
+        const a = i / count * 6.28 + rnd2() * 0.4;
+        school(I.x + Math.cos(a) * d, I.z + Math.sin(a) * d, 3);
+      }
+    };
+    ring(ISLANDS.main, 312, 12);
+    ring(ISLANDS.fern, ISLANDS.fern.r + 12, 12);
+    ring(ISLANDS.sky, ISLANDS.sky.r + 14, 6);
+    for (let i = 0; i < 14; i++) { // in the open sea between the islands
+      const x = X0 + 30 + rnd2() * (X1 - X0 - 60), z = Z0 + 30 + rnd2() * (Z1 - Z0 - 60);
+      if (getHeight(x, z) < -5.5) school(x, z, 3);
+    }
+    const L = ZONES.fernLake; // a few in Fern Island's lake too
+    for (let i = 0; i < 6; i++) {
+      const a = rnd2() * 6.28, d = Math.sqrt(rnd2()) * L.r * 0.5;
+      add(L.x + Math.cos(a) * d, L.z + Math.sin(a) * d, lakeG, null, rnd2);
+    }
+  }
+
+  /** Tall trees with leaves high up: food for a Brachiosaurus. */
+  buildTallTrees(rnd) {
+    this.tallTrees = [];
+    const spots = [];
+    const free = (s) => s && this.trees.every((t) => Math.abs(t.x - s.x) > 4 || Math.abs(t.z - s.z) > 4)
+      && NESTS.every((n) => Math.hypot(s.x - n.x, s.z - n.z) > 12)
+      && spots.every((o) => Math.hypot(o.x - s.x, o.z - s.z) > 9)
+      && !['fernLake', 'lake', 'volcano'].includes(zoneAt(s.x, s.z));
+    const F = ZONES.forest;
+    for (let i = 0; i < 120 && spots.length < 34; i++) { const s = this.landSpot(rnd, F.x, F.z, F.r, 2); if (free(s)) spots.push(s); }
+    const I = ISLANDS.fern;
+    for (let i = 0; i < 60 && spots.length < 46; i++) { const s = this.landSpot(rnd, I.x, I.z, I.r - 45, 2); if (free(s)) spots.push(s); }
+    for (const [cx, cz] of [[-120, 110], [-60, 20], [60, 120], [-150, -10]]) { // a few groves on Dino Island
+      for (let i = 0; i < 10; i++) { const s = this.landSpot(rnd, cx, cz, 22, 2); if (free(s)) spots.push(s); }
+    }
+
+    const trunk = new Kit();
+    trunk.add(new THREE.CylinderGeometry(0.35, 0.75, 18, 8), 0x6d4a2c, { p: [0, 9, 0] });
+    for (let i = 0; i < 5; i++) { // bare branch stubs low on the trunk
+      const a = i * 2.4;
+      trunk.add(new THREE.CylinderGeometry(0.08, 0.14, 2.2, 5), 0x6d4a2c, { p: [Math.cos(a) * 0.9, 8 + i * 0.9, Math.sin(a) * 0.9], r: [Math.sin(a) * 1.1, 0, -Math.cos(a) * 1.1] });
+    }
+    const crown = new Kit(); // layered, umbrella-shaped crown like a monkey-puzzle tree
+    for (const [y, r, h] of [[12.2, 4.8, 1.8], [14.2, 4.2, 1.8], [16.0, 3.4, 1.7], [17.6, 2.4, 1.6], [18.9, 1.3, 1.6]]) {
+      crown.add(new THREE.ConeGeometry(r, h, 9), 0xffffff, { p: [0, y, 0] });
+      crown.add(new THREE.SphereGeometry(r * 0.92, 9, 4, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), 0xbbbbbb, { p: [0, y - h / 2 + 0.05, 0], s: [1, 0.25, 1] });
+    }
+    const trunks = new THREE.InstancedMesh(trunk.geometry(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), spots.length);
+    const crowns = new THREE.InstancedMesh(crown.geometry(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), spots.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
+    spots.forEach((s, i) => {
+      const k = 0.85 + rnd() * 0.35;
+      p.set(s.x, getHeight(s.x, s.z) - 0.3, s.z);
+      q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rnd() * 6.28);
+      sc.set(k, k, k);
+      m.compose(p, q, sc);
+      trunks.setMatrixAt(i, m); crowns.setMatrixAt(i, m);
+      col.setHSL(0.27 + rnd() * 0.06, 0.5, 0.22 + rnd() * 0.06);
+      crowns.setColorAt(i, col);
+      addCollider(s.x, s.z, 0.75 * k, p.y + 20 * k);
+      this.tallTrees.push({ i, x: s.x, z: s.z, y: p.y, k, ready: true, regrow: 0, pos: p.clone(), quat: q.clone() });
+    });
+    this.scene.add(trunks, crowns);
+    this.tallCrowns = crowns;
+  }
+
+  /** A Brachiosaurus ate the leaves: the crown shrinks back and regrows later. */
+  eatTallTree(tr) {
+    tr.ready = false; tr.regrow = 50;
+    this.setCrown(tr, 0.45);
+  }
+  setCrown(tr, f) {
+    const m = new THREE.Matrix4();
+    m.compose(tr.pos, tr.quat, new THREE.Vector3(tr.k * f, tr.k, tr.k * f));
+    this.tallCrowns.setMatrixAt(tr.i, m);
+    this.tallCrowns.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Clumps of ferns covering Fern Island (scenery only). */
+  buildFerns(rnd) {
+    const k = new Kit();
+    for (let i = 0; i < 7; i++) {
+      const a = i / 7 * Math.PI * 2;
+      k.add(new THREE.ConeGeometry(0.28, 2.0, 4), i % 2 ? 0x4c8f35 : 0x5fa443, { p: [Math.cos(a) * 0.75, 0.55, Math.sin(a) * 0.75], r: [Math.sin(a) * 1.05, 0, -Math.cos(a) * 1.05], s: [1, 1, 0.35] });
+    }
+    const I = ISLANDS.fern, spots = [];
+    for (let i = 0; i < 400; i++) { const s = this.landSpot(rnd, I.x, I.z, I.r - 35, 1.2); if (s && zoneAt(s.x, s.z) !== 'fernLake') spots.push(s); }
+    const ferns = new THREE.InstancedMesh(k.geometry(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), spots.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+    spots.forEach((s, i) => {
+      const sz = 0.7 + rnd() * 0.8;
+      p.set(s.x, getHeight(s.x, s.z) - 0.1, s.z);
+      q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rnd() * 6.28);
+      m.compose(p, q, sc.set(sz, sz, sz));
+      ferns.setMatrixAt(i, m);
+    });
+    this.scene.add(ferns);
   }
 
   update(dt, t) {
     this.updateTrees(dt);
     for (const f of this.fish) {
       if (!f.ready) { f.regrow -= dt; if (f.regrow <= 0) { f.ready = true; f.group.visible = true; } continue; }
+      if (f.swim) { // sea fish swim round in circles and jump now and then
+        const w = f.swim;
+        w.a += w.w * dt;
+        f.group.position.x = w.cx + Math.cos(w.a) * w.r;
+        f.group.position.z = w.cz + Math.sin(w.a) * w.r;
+        f.group.rotation.y = -w.a + (w.w > 0 ? 0 : Math.PI);
+        const s = Math.sin(t * 0.9 + f.phase);
+        f.group.position.y = -0.7 + Math.max(0, s - 0.6) * 4.5;
+        f.group.rotation.x = s > 0.6 ? -Math.cos(t * 0.9 + f.phase) * 1.2 : 0;
+        continue;
+      }
       const s = Math.sin(t * 1.4 + f.phase);
       f.group.position.y = -0.6 + Math.max(0, s) * 2.4;
       f.group.rotation.x = -Math.cos(t * 1.4 + f.phase) * 0.9;
       f.group.rotation.y = f.phase;
     }
+    for (const tr of this.tallTrees) {
+      if (!tr.ready) { tr.regrow -= dt; if (tr.regrow <= 0) { tr.ready = true; this.setCrown(tr, 1); } }
+    }
     for (const b of this.bushes) {
       if (!b.ready) { b.regrow -= dt; if (b.regrow <= 0) { b.ready = true; b.berries.visible = true; } }
     }
-    for (const c of this.clouds) { c.position.x += dt * 2; if (c.position.x > 600) c.position.x = -600; }
+    for (const c of this.clouds) { c.position.x += dt * 2; if (c.position.x > 1100) c.position.x = -700; }
     const pulse = 0.85 + Math.sin(t * 2) * 0.15;
     this.lava.material.color.setRGB(1 * pulse, 0.2 * pulse, 0.02);
   }
