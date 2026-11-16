@@ -380,16 +380,30 @@ export class World {
     const F = ISLANDS.fern, extra = [];
     const ok2 = (s) => s && zoneAt(s.x, s.z) !== 'fernLake' && NESTS.every((n) => Math.hypot(s.x - n.x, s.z - n.z) > 10);
     for (let i = 0; i < 240; i++) { const s = this.landSpot(rnd2, F.x, F.z, F.r - 40); if (ok2(s)) extra.push(s); }
+    // Tall trees along the river banks, mostly on the jungle (north) side, close
+    // enough to the water that a Triceratops can knock them across as bridges.
+    const rnd3 = mulberry(4242), bank = [];
+    const vx = RIVER.x2 - RIVER.x1, vz = RIVER.z2 - RIVER.z1, vl = Math.hypot(vx, vz);
+    const nx = -vz / vl, nz = vx / vl; // points north, toward the jungle
+    const taken = (s) => [...spots, ...bank].some((o) => Math.hypot(o.x - s.x, o.z - s.z) < 5)
+      || NESTS.some((n) => Math.hypot(s.x - n.x, s.z - n.z) < 10);
+    for (let i = 0; i < 160 && bank.length < 26; i++) {
+      const t = 0.12 + rnd3() * 0.62;
+      const side = rnd3() < 0.75 ? 1 : -1, off = 6.5 + rnd3() * 2;
+      const cx = RIVER.x1 + vx * t, cz = RIVER.z1 + vz * t + Math.sin(t * 14) * 9; // centre of the winding river
+      const s = { x: cx + nx * off * side, z: cz + nz * off * side };
+      if (getHeight(s.x, s.z) > 1 && Math.hypot(s.x, s.z) < 255 && riverDist(s.x, s.z) > 6 && !taken(s)) bank.push(s);
+    }
 
     const trunkG = new THREE.CylinderGeometry(0.3, 0.5, 5, 6); trunkG.translate(0, 2.5, 0);
     const leafG = new THREE.ConeGeometry(2.8, 6.5, 7); leafG.translate(0, 7.2, 0);
-    const total = spots.length + extra.length;
+    const total = spots.length + extra.length + bank.length;
     const trunks = new THREE.InstancedMesh(trunkG, lam(0x8b5a2b), total);
     const leaves = new THREE.InstancedMesh(leafG, lam(0xffffff), total);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
     const col = new THREE.Color();
-    const place = (s, i, rnd) => {
-      const k = 0.8 + rnd() * 0.9;
+    const place = (s, i, rnd, minK = 0.8) => {
+      const k = minK + rnd() * (1.7 - minK);
       p.set(s.x, getHeight(s.x, s.z) - 0.3, s.z);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, rnd() * 6.28);
       sc.set(k, k * (0.85 + rnd() * 0.4), k);
@@ -405,6 +419,7 @@ export class World {
     };
     spots.forEach((s, i) => place(s, i, rnd));
     extra.forEach((s, j) => place(s, spots.length + j, rnd2));
+    bank.forEach((s, j) => place(s, spots.length + extra.length + j, rnd3, 1.4)); // tall enough to span the river
     this.scene.add(trunks, leaves);
     this.treeMeshes = [trunks, leaves];
   }
