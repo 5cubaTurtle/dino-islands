@@ -1,4 +1,4 @@
-# 🦖 Dino Island
+# 🦖 Dino Islands
 
 A free-roam 3D dinosaur game that runs in your web browser. Pick a dinosaur,
 explore three islands, find food and water, fight wild animals, and defeat
@@ -12,7 +12,7 @@ You need Python 3 and a modern browser (Firefox or Chrome).
 
 ```bash
 git clone <this-repo-url>
-cd dino-island
+cd dino-islands
 ./run.sh            # or: ./run.sh 9000  to use another port
 ```
 
@@ -91,3 +91,7 @@ src/
 
 To tweak the balance, edit `src/species.js` (speed, health, damage, cooldowns)
 or `src/bosses.js`, then reload the page.
+
+## License
+
+[MIT](LICENSE). The bundled Three.js in `vendor/` is also MIT-licensed, © the Three.js authors.

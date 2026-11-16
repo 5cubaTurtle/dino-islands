@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Free-roam 3D dinosaur action game (Three.js, runs in the browser)",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "start": "./run.sh"
   },
