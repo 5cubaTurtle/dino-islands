@@ -425,11 +425,12 @@ export class World {
   }
 
   /**
-   * Horns hit the nearest standing tree in front of (x, z) facing (fx, fz).
-   * Each hit makes it lean; the TREE_HITS-th breaks it. Returns the tree
-   * (with tree.state === 'falling' if this hit broke it) or null.
+   * Horns (or a hard head) hit the nearest standing tree in front of (x, z)
+   * facing (fx, fz). Each hit counts `power` towards TREE_HITS and makes the
+   * tree lean; reaching TREE_HITS breaks it. Returns the tree (with
+   * tree.state === 'falling' if this hit broke it) or null.
    */
-  hitTree(x, z, fx, fz, reach, skip) {
+  hitTree(x, z, fx, fz, reach, skip, power = 1) {
     let best = null, bd = Infinity;
     for (const tr of this.trees) {
       if (tr.state !== 'up' || (skip && skip.has(tr))) continue;
@@ -443,7 +444,7 @@ export class World {
     if (!best) return null;
     const dx = best.x - x, dz = best.z - z, d = Math.hypot(dx, dz) || 1;
     best.fx = dx / d; best.fz = dz / d; // it leans, then falls, away from the hit
-    best.hits++;
+    best.hits += power;
     if (best.hits >= TREE_HITS) {
       best.state = 'falling'; best.t = 0;
       best.collider.top = -Infinity; // no longer solid

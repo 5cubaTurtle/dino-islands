@@ -16,7 +16,7 @@ export const groundAt = (x, z) => Math.max(getHeight(x, z), SWIM_Y);
 const SHORE_Y = 0.5;      // ground this low is a beach or bank: always walkable
 const SLIDE_SPEED = 7;    // how fast a dinosaur slips down ground too steep for it
 const grad = { x: 0, z: 0 };
-const LIGHT = new Set(['raptor', 'ptera']); // light enough to walk on a log bridge
+const LIGHT = new Set(['raptor', 'ptera', 'pachy']); // light enough to walk on a log bridge
 const SWIM_DEPTH = -0.8; // a swimmer (Mosasaurus) needs water deeper than this
 const deepEnough = (x, z) => getHeight(x, z) < SWIM_DEPTH;
 

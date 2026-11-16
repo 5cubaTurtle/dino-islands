@@ -36,9 +36,12 @@ function melee(game, p, range, dmg, knock, allAround = false) {
   return any;
 }
 
-/** Triceratops horns knock a tree: it leans a bit more each time and breaks on the last hit. */
-function hornTree(game, p, reach, skip) {
-  const tr = game.world.hitTree(p.pos.x, p.pos.z, Math.sin(p.yaw), Math.cos(p.yaw), reach, skip);
+/**
+ * Knock a tree: Triceratops horns make it lean a bit more each time and break
+ * it on the 4th hit; a Pachycephalosaurus head butt (power 4) breaks it at once.
+ */
+function hornTree(game, p, reach, skip, power = 1) {
+  const tr = game.world.hitTree(p.pos.x, p.pos.z, Math.sin(p.yaw), Math.cos(p.yaw), reach, skip, power);
   if (!tr) return null;
   const at = p.pos.clone(); at.x = tr.x; at.z = tr.z;
   game.effects.dust(at, 1.4);
@@ -139,9 +142,9 @@ export function updatePlayer(game, dt) {
         if (c.stun && !n.ko) { n.stun = c.stun; fx.stars(n, c.stun); }
       }
     }
-    // charging into a tree counts as one horn hit on it
-    if (c.horns) {
-      const tr = hornTree(game, p, p.radius + 1.2, c.hit);
+    // charging into a tree hits it too (a Triceratops charge counts as one horn hit)
+    if (c.trees) {
+      const tr = hornTree(game, p, p.radius + 1.2, c.hit, c.trees);
       if (tr) c.hit.add(tr);
     }
     if (c.t <= 0) endSpecial(p);
@@ -222,11 +225,11 @@ export function updatePlayer(game, dt) {
       }
     } else if (s.special === 'charge') {
       p.specialCd = s.specialCd; p.specialAnim = 1;
-      p.charge = { t: 1.1, dx, dz, hit: new Set(), speed: 28, dmg: 45, knock: 24, horns: true };
+      p.charge = { t: 1.1, dx, dz, hit: new Set(), speed: 28, dmg: 45, knock: 24, trees: 1 };
       game.sfx.whoosh();
     } else if (s.special === 'ram') { // Pachycephalosaurus: short dash that leaves foes seeing stars
       p.specialCd = s.specialCd; p.specialAnim = 1;
-      p.charge = { t: 0.6, dx, dz, hit: new Set(), speed: 30, dmg: 30, knock: 18, stun: 2 };
+      p.charge = { t: 0.6, dx, dz, hit: new Set(), speed: 30, dmg: 30, knock: 18, stun: 2, trees: 4 };
       game.sfx.whoosh();
     } else if (s.special === 'armor') {
       p.specialCd = s.specialCd; p.armorT = 4;
@@ -284,5 +287,6 @@ export function updatePlayer(game, dt) {
     else game.sfx.swipe();
     melee(game, p, s.range, s.dmg, s.knock ?? (p.key === 'trex' ? 12 : p.key === 'trike' ? 10 : 6), !!s.allAround);
     if (p.key === 'trike') hornTree(game, p, s.range);
+    if (p.key === 'pachy') hornTree(game, p, s.range, null, 4); // one head butt fells a tree
   }
 }
