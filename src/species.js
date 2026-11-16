@@ -9,7 +9,7 @@ export const SPECIES = {
     hp: 220, dmg: 40, range: 4.2, atkCd: 1.4, radius: 2.0,
     diet: 'meat', camDist: 16, camH: 4.6, headH: 5.2,
     attackName: 'Chomp', special: 'roar', specialName: 'Roar', specialCd: 12,
-    npc: { hp: 160, dmg: 14 },
+    npc: { hp: 160, dmg: 34 },
   },
   trike: {
     name: 'Triceratops', blurb: 'Tough tank with a mighty charge.',
@@ -17,7 +17,7 @@ export const SPECIES = {
     hp: 240, dmg: 26, range: 3.6, atkCd: 0.6, radius: 2.0,
     diet: 'plant', camDist: 14, camH: 3.6, headH: 4.0,
     attackName: 'Horn jab', special: 'charge', specialName: 'Charge', specialCd: 4,
-    npc: { hp: 110, dmg: 9 },
+    npc: { hp: 130, dmg: 19 },
   },
   raptor: {
     name: 'Velociraptor', blurb: 'Super fast. Leaps on its prey.',
@@ -25,7 +25,7 @@ export const SPECIES = {
     hp: 110, dmg: 15, range: 2.4, atkCd: 0.35, radius: 0.8,
     diet: 'meat', camDist: 7.5, camH: 2.0, headH: 2.3,
     attackName: 'Claw swipe', special: 'pounce', specialName: 'Pounce', specialCd: 2.5,
-    npc: { hp: 45, dmg: 5 },
+    npc: { hp: 85, dmg: 15 },
   },
   ptera: {
     name: 'Pteranodon', blurb: 'Flies! Dive-bomb from the sky.',
@@ -33,7 +33,7 @@ export const SPECIES = {
     hp: 100, dmg: 14, range: 2.8, atkCd: 0.4, radius: 1.0,
     diet: 'fish', camDist: 10, camH: 1.8, headH: 2.0,
     attackName: 'Beak peck', special: 'dive', specialName: 'Dive-bomb', specialCd: 2,
-    npc: { hp: 35, dmg: 4 },
+    npc: { hp: 35, dmg: 15 },
   },
 };
 
